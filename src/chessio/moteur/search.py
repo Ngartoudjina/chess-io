@@ -6,7 +6,9 @@
   position au milieu d'un échange ;
 * ordre des coups : coup de la table, prises MVV-LVA, promotions, coups
   « tueurs », puis historique ;
-* MultiPV : les ``k`` meilleurs coups, en excluant à la racine ceux déjà trouvés.
+* MultiPV : les ``k`` meilleurs coups, en excluant à la racine ceux déjà trouvés ;
+* v0.2 : recherche à fenêtre nulle (PVS), fenêtres d'aspiration, coup nul,
+  réductions des coups tardifs (LMR), élagages statique et de frontière.
 
 Le générateur de coups est celui de python-chess ; la v2 en Rust (lot L4)
 reprendra cette logique avec ses propres bitboards.
@@ -30,6 +32,9 @@ EXACT, LOWER, UPPER = 0, 1, 2
 DEFAULT_TT_ENTRIES = 400_000  # environ 150 Mo en Python
 CHECK_EVERY = 1023  # masque : contrôle du temps tous les 1 024 nœuds
 DELTA_MARGIN = 200  # quiescence : prise jugée inutile si même gagnée elle ne suffit pas
+ASPIRATION = 40  # demi-largeur de la fenêtre d'aspiration à la racine (centipions)
+REVERSE_FUTILITY = 120  # élagage statique : marge par demi-coup restant
+FUTILITY_MARGIN = 150  # élagage de frontière : marge par demi-coup restant
 
 # Valeurs pour l'ordre des coups (le roi « attaquant » passe en dernier).
 ORDER_VALUES = {
@@ -150,17 +155,20 @@ class Searcher:
             return SearchInfo(0, (), 0, 0.0)
         multipv = max(1, min(multipv, len(root_moves)))
         result: SearchInfo | None = None
+        previous: list[int] = []  # scores de l'itération précédente, ligne par ligne
         for depth in range(1, (limits.depth or MAX_PLY) + 1):
             self._can_abort = depth > 1  # la profondeur 1 va toujours à son terme
             try:
                 lines: list[SearchLine] = []
                 excluded: list[chess.Move] = []
-                for _ in range(multipv):
-                    score, pv = self._root(board, depth, excluded)
+                for index in range(multipv):
+                    guess = previous[index] if index < len(previous) else None
+                    score, pv = self._root(board, depth, excluded, guess)
                     lines.append(SearchLine(score, tuple(pv)))
                     excluded.append(pv[0])
             except SearchAborted:
                 break
+            previous = [line.score for line in lines]
             lines.sort(key=lambda line: line.score, reverse=True)
             result = SearchInfo(depth, tuple(lines), self.nodes, time.perf_counter() - start)
             if on_iteration is not None:
@@ -190,27 +198,57 @@ class Searcher:
     # --- racine -------------------------------------------------------------
 
     def _root(
-        self, board: chess.Board, depth: int, excluded: list[chess.Move]
+        self, board: chess.Board, depth: int, excluded: list[chess.Move], guess: int | None
     ) -> tuple[int, list[chess.Move]]:
-        alpha, beta = -INF, INF
+        """Fenêtre d'aspiration autour du score précédent, élargie en cas d'échec."""
+        if guess is None or depth < 4 or abs(guess) >= MATE_BOUND:
+            return self._root_window(board, depth, excluded, -INF, INF)
+        window = ASPIRATION
+        alpha, beta = guess - window, guess + window
+        while True:
+            score, pv = self._root_window(board, depth, excluded, alpha, beta)
+            if score <= alpha and alpha > -INF:
+                window *= 4
+                alpha = max(-INF, score - window)
+            elif score >= beta and beta < INF:
+                window *= 4
+                beta = min(INF, score + window)
+            else:
+                return score, pv
+
+    def _root_window(
+        self, board: chess.Board, depth: int, excluded: list[chess.Move], alpha: int, beta: int
+    ) -> tuple[int, list[chess.Move]]:
+        original_alpha = alpha
         best_score, best_move = -INF, None
         key = board._transposition_key()
         entry = self.tt.get(key)
         tt_move = entry[3] if entry is not None else None
         best_pv: list[chess.Move] = []
+        first = True
         for move in self._ordered(board, board.legal_moves, tt_move, 0):
             if move in excluded:
                 continue
             board.push(move)
             try:
-                score = -self._negamax(board, depth - 1, -beta, -alpha, 1)
+                if first:
+                    score = -self._negamax(board, depth - 1, -beta, -alpha, 1)
+                else:
+                    # Fenêtre nulle : ce coup fait-il mieux que le meilleur actuel ?
+                    score = -self._negamax(board, depth - 1, -alpha - 1, -alpha, 1)
+                    if alpha < score < beta:
+                        score = -self._negamax(board, depth - 1, -beta, -alpha, 1)
             finally:
                 board.pop()
+            first = False
             if score > best_score:
                 best_score, best_move = score, move
                 best_pv = [move, *self._pv[1]]
-                alpha = max(alpha, score)
-        if not excluded:
+                if score > alpha:
+                    alpha = score
+                    if alpha >= beta:
+                        break
+        if not excluded and original_alpha < best_score < beta:
             self._store(key, depth, best_score, EXACT, best_move, 0)
         return best_score, self._complete_pv(board, best_pv, depth)
 
@@ -238,7 +276,15 @@ class Searcher:
 
     # --- négamax --------------------------------------------------------------
 
-    def _negamax(self, board: chess.Board, depth: int, alpha: int, beta: int, ply: int) -> int:
+    def _negamax(
+        self,
+        board: chess.Board,
+        depth: int,
+        alpha: int,
+        beta: int,
+        ply: int,
+        allow_null: bool = True,
+    ) -> int:
         self.nodes += 1
         if not self.nodes & CHECK_EVERY:
             self._tick()
@@ -259,12 +305,13 @@ class Searcher:
         if depth <= 0 or ply >= MAX_PLY:
             return self._quiescence(board, alpha, beta, ply)
 
+        pv_node = beta - alpha > 1
         key = board._transposition_key()
         entry = self.tt.get(key)
         tt_move = None
         if entry is not None:
             tt_depth, tt_score, tt_flag, tt_move = entry
-            if tt_depth >= depth:
+            if tt_depth >= depth and not pv_node:
                 score = self._from_tt(tt_score, ply)
                 if (
                     tt_flag == EXACT
@@ -273,13 +320,64 @@ class Searcher:
                 ):
                     return score
 
+        static_eval = None
+        if not in_check and not pv_node:
+            static_eval = evaluate(board)
+            # Élagage statique : si loin au-dessus de bêta, l'adversaire évitera cette position.
+            if (
+                depth <= 3
+                and abs(beta) < MATE_BOUND
+                and static_eval - REVERSE_FUTILITY * depth >= beta
+            ):
+                return static_eval
+            # Coup nul : si passer son tour suffit encore à dépasser bêta, inutile de chercher.
+            if allow_null and depth >= 3 and static_eval >= beta and self._has_pieces(board):
+                reduction = 3 if depth >= 6 else 2
+                board.push(chess.Move.null())
+                try:
+                    score = -self._negamax(
+                        board, depth - 1 - reduction, -beta, -beta + 1, ply + 1, False
+                    )
+                finally:
+                    board.pop()
+                if score >= beta:
+                    return beta if score >= MATE_BOUND else score
+        # Élagage de frontière : près des feuilles, un coup tranquille ne rattrapera pas alpha.
+        futile = (
+            static_eval is not None
+            and depth <= 2
+            and static_eval + FUTILITY_MARGIN * depth <= alpha
+        )
+
         original_alpha = alpha
         best_score, best_move = -INF, None
         searched = 0
+        killers = self._killers[ply]
         for move in self._ordered(board, board.legal_moves, tt_move, ply):
+            quiet = move.promotion is None and not board.is_capture(move)
+            late = searched >= 3 and depth >= 3 and not in_check
+            gives_check = (
+                board.gives_check(move) if quiet and searched and (futile or late) else False
+            )
+            if futile and quiet and searched and not gives_check:
+                continue
+            # Réduction des coups tardifs : bien ordonnés, les derniers coups tranquilles
+            # sont rarement les meilleurs ; on les cherche moins loin, quitte à recommencer.
+            reduction = 0
+            if late and quiet and not gives_check and move not in killers:
+                reduction = 1 if searched < 6 or pv_node else 2
             board.push(move)
             try:
-                score = -self._negamax(board, depth - 1, -beta, -alpha, ply + 1)
+                if not searched:
+                    score = -self._negamax(board, depth - 1, -beta, -alpha, ply + 1)
+                else:
+                    score = -self._negamax(
+                        board, depth - 1 - reduction, -alpha - 1, -alpha, ply + 1
+                    )
+                    if reduction and score > alpha:
+                        score = -self._negamax(board, depth - 1, -alpha - 1, -alpha, ply + 1)
+                    if pv_node and alpha < score < beta:
+                        score = -self._negamax(board, depth - 1, -beta, -alpha, ply + 1)
             finally:
                 board.pop()
             searched += 1
@@ -342,6 +440,12 @@ class Searcher:
                     if alpha >= beta:
                         break
         return best
+
+    @staticmethod
+    def _has_pieces(board: chess.Board) -> bool:
+        """Le camp au trait a-t-il des pièces ? (sinon zugzwang probable : pas de coup nul)"""
+        pieces = board.knights | board.bishops | board.rooks | board.queens
+        return bool(pieces & board.occupied_co[board.turn])
 
     @staticmethod
     def _noisy_moves(board: chess.Board) -> Iterable[chess.Move]:

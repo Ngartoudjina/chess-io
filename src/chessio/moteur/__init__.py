@@ -5,4 +5,4 @@ reprendra la logique en Rust pour la vitesse.
 """
 
 NAME = "Chessio Moteur"
-VERSION = "0.1"
+VERSION = "0.2"
