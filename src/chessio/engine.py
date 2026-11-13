@@ -2,6 +2,10 @@
 
 Le moteur tourne toujours dans son propre processus : python-chess le lance
 et lui parle en UCI. On change donc de moteur en changeant d'exécutable.
+
+L'analyse est progressive : le meilleur coup provisoire est communiqué à chaque
+approfondissement, et l'analyse s'interrompt dès que la position n'intéresse
+plus (nouvelle capture, correction d'une case…).
 """
 
 from __future__ import annotations
@@ -9,6 +13,7 @@ from __future__ import annotations
 import os
 import shutil
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -26,6 +31,7 @@ MIN_TIME = 0.1
 MAX_TIME = 10.0
 DEFAULT_TIME = 2.0
 DEFAULT_HASH_MB = 256
+UPDATE_INTERVAL = 0.1  # secondes entre deux résultats provisoires
 
 
 class EngineNotFoundError(FileNotFoundError):
@@ -75,6 +81,7 @@ class Line:
     pv: tuple[chess.Move, ...]
     pv_san: str
     depth: int
+    wdl: chess.engine.Wdl | None = None  # chances (‰) du point de vue des Blancs
 
     @property
     def uci(self) -> str:
@@ -83,6 +90,16 @@ class Line:
     @property
     def evaluation(self) -> str:
         return format_score(self.score)
+
+    @property
+    def white_wdl(self) -> chess.engine.Wdl:
+        """Gain / nul / perte des Blancs (‰) : donnés par le moteur, sinon estimés."""
+        return self.wdl if self.wdl is not None else self.score.white().wdl(model="sf")
+
+    @property
+    def white_expectation(self) -> float:
+        """Espérance de points des Blancs, de 0 (perdu) à 1 (gagné)."""
+        return self.white_wdl.expectation()
 
 
 @dataclass(frozen=True)
@@ -93,6 +110,8 @@ class Analysis:
     lines: tuple[Line, ...]
     elapsed: float
     outcome: str | None = None  # « mat » ou « pat » si la partie est déjà finie
+    partial: bool = False  # résultat provisoire, l'analyse continue
+    stopped: bool = False  # analyse interrompue avant la fin du temps imparti
 
     @property
     def best(self) -> Line | None:
@@ -111,7 +130,11 @@ class Engine:
     ) -> None:
         self.path = Path(path) if path is not None else find_stockfish()
         self._engine = chess.engine.SimpleEngine.popen_uci(str(self.path))
-        options = {"Threads": threads or default_threads(), "Hash": hash_mb}
+        options = {
+            "Threads": threads or default_threads(),
+            "Hash": hash_mb,
+            "UCI_ShowWDL": True,  # chances de gain / nul / perte
+        }
         self._engine.configure(
             {name: value for name, value in options.items() if name in self._engine.options}
         )
@@ -130,8 +153,14 @@ class Engine:
         *,
         time_limit: float = DEFAULT_TIME,
         multipv: int = 1,
+        on_update: Callable[[Analysis], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> Analysis:
         """Calcule les ``multipv`` meilleurs coups en ``time_limit`` secondes.
+
+        ``on_update`` reçoit des résultats provisoires au fil de l'approfondissement ;
+        ``should_stop`` permet d'interrompre l'analyse (vérifié à chaque information
+        du moteur, soit plusieurs fois par seconde).
 
         Lève :class:`~chessio.position.InvalidPositionError` sur une position
         douteuse : on ne propose jamais de coup sur une position invalide.
@@ -148,10 +177,28 @@ class Engine:
             return Analysis(fen=fen, lines=(), elapsed=0.0, outcome=outcome)
 
         start = time.perf_counter()
-        infos = self._engine.analyse(board, chess.engine.Limit(time=time_limit), multipv=multipv)
-        elapsed = time.perf_counter() - start
-        lines = tuple(_to_line(board, info) for info in infos if info.get("pv"))
-        return Analysis(fen=fen, lines=lines, elapsed=elapsed)
+        lines: dict[int, Line] = {}
+        stopped = False
+        last_update = 0.0
+        limit = chess.engine.Limit(time=time_limit)
+        with self._engine.analysis(board, limit, multipv=multipv) as running:
+            for info in running:
+                if should_stop is not None and should_stop():
+                    stopped = True
+                    break
+                if "pv" not in info or "score" not in info:
+                    continue
+                lines[info.get("multipv", 1)] = _to_line(board, info)
+                now = time.perf_counter()
+                if on_update is not None and now - last_update >= UPDATE_INTERVAL:
+                    last_update = now
+                    on_update(Analysis(fen, _ordered(lines), now - start, partial=True))
+            if not stopped:
+                # Dernières lignes complètes, dans l'ordre du moteur.
+                final = [info for info in running.multipv if "pv" in info and "score" in info]
+                if final:
+                    lines = {i: _to_line(board, info) for i, info in enumerate(final, start=1)}
+        return Analysis(fen, _ordered(lines), time.perf_counter() - start, stopped=stopped)
 
     def close(self) -> None:
         self._engine.quit()
@@ -168,8 +215,13 @@ class Engine:
         self.close()
 
 
+def _ordered(lines: dict[int, Line]) -> tuple[Line, ...]:
+    return tuple(lines[index] for index in sorted(lines))
+
+
 def _to_line(board: chess.Board, info: chess.engine.InfoDict) -> Line:
     pv = tuple(info["pv"])
+    wdl = info.get("wdl")
     return Line(
         move=pv[0],
         san=board.san(pv[0]),
@@ -177,4 +229,5 @@ def _to_line(board: chess.Board, info: chess.engine.InfoDict) -> Line:
         pv=pv,
         pv_san=board.variation_san(pv),
         depth=info.get("depth", 0),
+        wdl=wdl.white() if wdl is not None else None,
     )

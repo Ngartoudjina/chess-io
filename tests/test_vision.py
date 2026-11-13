@@ -7,6 +7,10 @@ from chessio.recognize import (
     SOURCE_PAWNS,
     SOURCE_SETTING,
     SOURCE_TURN,
+    TURN_CHECK,
+    TURN_DEFAULT,
+    TURN_INPUT,
+    TURN_LAST_MOVE,
     Orientation,
     recognize,
 )
@@ -194,3 +198,57 @@ class TestOrientation:
             render_board(chess.Board()), "w", templates, orientation=Orientation.WHITE_BOTTOM
         )
         assert result.orientation_source == SOURCE_SETTING
+
+
+def played(*sans: str) -> chess.Board:
+    board = chess.Board()
+    for san in sans:
+        board.push_san(san)
+    return board
+
+
+def with_last_move(board: chess.Board, **kwargs) -> np.ndarray:
+    move = board.peek()
+    return render_board(board, highlight=(move.from_square, move.to_square), **kwargs)
+
+
+class TestTurnInference:
+    """Le trait se déduit du dernier coup surligné, à défaut d'un roi en échec."""
+
+    @pytest.mark.parametrize("white_bottom", [True, False])
+    def test_last_move_gives_side_to_move(self, templates, white_bottom):
+        board = played("e4", "e5", "Nf3", "Nc6", "Bb5")  # aux Noirs de jouer
+        result = recognize(with_last_move(board, white_bottom=white_bottom), None, templates)
+        assert result.board.turn == chess.BLACK
+        assert result.turn_source == TURN_LAST_MOVE
+        assert result.last_move == board.peek()
+
+    def test_double_pawn_step_allows_en_passant(self, templates):
+        board = played("e4", "Nf6", "e5", "d5")  # exd6 en passant possible
+        result = recognize(with_last_move(board), None, templates)
+        assert result.board.ep_square == chess.D6
+        assert result.board.fen() == board.fen().replace(" 0 3", " 0 1")
+        assert chess.Move.from_uci("e5d6") in result.board.legal_moves
+
+    def test_king_in_check_gives_side_to_move(self, templates):
+        board = chess.Board("4k3/8/8/8/8/8/8/4RK2 b - - 0 1")  # Noirs en échec
+        result = recognize(render_board(board), None, templates, default_turn="w")
+        assert (result.board.turn, result.turn_source) == (chess.BLACK, TURN_CHECK)
+        assert result.ok
+
+    def test_default_when_nothing_tells(self, templates):
+        result = recognize(render_board(chess.Board()), None, templates, default_turn="b")
+        assert (result.board.turn, result.turn_source) == (chess.BLACK, TURN_DEFAULT)
+
+    def test_explicit_choice_wins_but_is_questioned(self, templates):
+        board = played("e4", "e5", "Nf3")  # aux Noirs de jouer
+        result = recognize(with_last_move(board), "w", templates)
+        assert (result.board.turn, result.turn_source) == (chess.WHITE, TURN_INPUT)
+        assert any("Noirs" in note for note in result.notes)
+
+    def test_selected_piece_makes_highlight_ambiguous(self, templates):
+        board = played("e4", "e5")
+        image = render_board(board, highlight=(chess.E7, chess.E5, chess.G1))
+        result = recognize(image, None, templates)
+        assert result.turn_source == TURN_DEFAULT
+        assert result.last_move is None

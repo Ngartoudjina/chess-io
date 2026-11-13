@@ -288,6 +288,7 @@ def calibrate(cells: np.ndarray, base_theme: Theme = CHESSCOM_GREEN) -> Template
         name=f"calibré ({base_theme.name})",
         light=(light, *base_theme.light),
         dark=(dark, *base_theme.dark),
+        highlight=base_theme.highlight,
     )
     glyphs = learn_glyphs(cells, white_bottom, theme)
     return TemplateSet(np.stack(images), np.stack(masks), tuple(labels), theme, glyphs)

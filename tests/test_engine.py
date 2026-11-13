@@ -73,3 +73,33 @@ def test_game_already_over(engine):
 def test_time_limit_bounds(engine, seconds):
     with pytest.raises(ValueError):
         engine.analyse(chess.Board(), time_limit=seconds)
+
+
+def test_progressive_results(engine):
+    updates = []
+    final = engine.analyse(chess.Board(), time_limit=1.0, multipv=2, on_update=updates.append)
+    assert updates, "aucun résultat provisoire"
+    assert all(update.partial for update in updates)
+    assert not final.partial and not final.stopped
+    assert final.best.depth >= updates[0].best.depth
+
+
+def test_stop_interrupts_quickly(engine):
+    updates = []
+    final = engine.analyse(
+        chess.Board(),
+        time_limit=5.0,
+        on_update=updates.append,
+        should_stop=lambda: bool(updates),
+    )
+    assert final.stopped
+    assert final.elapsed < 1.5
+    assert final.best is not None
+
+
+def test_win_draw_loss(engine):
+    best = engine.analyse(chess.Board("6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1"), time_limit=0.3).best
+    assert sum(best.white_wdl) == 1000
+    assert best.white_expectation > 0.99
+    start = engine.analyse(chess.Board(), time_limit=0.3).best
+    assert 0.3 < start.white_expectation < 0.8
