@@ -19,7 +19,7 @@ import chess
 import chess.engine
 import chess.pgn
 
-from chessio.engine import HOMEMADE, find_stockfish, homemade_command
+from chessio.engine import HOMEMADE, HOMEMADE_PYTHON, find_stockfish, homemade_command
 
 # Ouvertures courantes et équilibrées, pour varier les parties.
 OPENINGS = (
@@ -49,8 +49,8 @@ TERMINATIONS = {
 
 def engine_command(name: str) -> list[str]:
     """« maison », « stockfish » ou chemin d'un moteur UCI."""
-    if name == HOMEMADE:
-        return homemade_command()
+    if name in (HOMEMADE, HOMEMADE_PYTHON):
+        return homemade_command(name)
     if name == "stockfish":
         return [str(find_stockfish())]
     return [name]

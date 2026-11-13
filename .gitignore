@@ -22,3 +22,6 @@ models/*.onnx
 # Éditeurs
 .vscode/
 .idea/
+
+# Compilation du moteur Rust (lot L4)
+moteur-rs/target/

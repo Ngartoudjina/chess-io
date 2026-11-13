@@ -1,5 +1,6 @@
-"""Moteur maison v1 : règles (perft), évaluation, recherche et protocole UCI."""
+"""Moteur maison : v1 en Python (règles, évaluation, recherche, UCI) et v2 en Rust."""
 
+import subprocess
 import sys
 
 import chess
@@ -7,6 +8,7 @@ import chess.engine
 import numpy as np
 import pytest
 
+from chessio.engine import find_rust_engine
 from chessio.moteur.evaluation import evaluate
 from chessio.moteur.perft import divide, perft
 from chessio.moteur.search import MATE_BOUND, Limits, Searcher, mate_in
@@ -165,3 +167,66 @@ class TestUci:
             infos = engine.analyse(chess.Board(), chess.engine.Limit(time=0.5), multipv=2)
             assert len(infos) == 2
             assert infos[0]["pv"][0] != infos[1]["pv"][0]
+
+
+rust_engine = pytest.mark.skipif(
+    find_rust_engine() is None, reason="moteur Rust non compilé (cargo build --release)"
+)
+
+
+@rust_engine
+class TestRustEngine:
+    """Moteur maison v2 (lot L4), piloté en UCI comme dans l'application."""
+
+    @pytest.fixture(scope="class")
+    def engine(self):
+        with chess.engine.SimpleEngine.popen_uci([str(find_rust_engine())]) as engine:
+            yield engine
+
+    def test_identity(self, engine):
+        assert engine.id["name"].startswith("Chessio Moteur 0.3")
+
+    @pytest.mark.parametrize(
+        ("fen", "depth", "nodes"),
+        [(chess.STARTING_FEN, 5, 4_865_609), (KIWIPETE, 4, 4_085_603)],
+    )
+    def test_perft(self, fen, depth, nodes):
+        script = f"position fen {fen}\ngo perft {depth}\nquit\n"
+        out = subprocess.run(
+            [str(find_rust_engine())], input=script, capture_output=True, text=True, timeout=60
+        ).stdout
+        assert f"Nodes searched: {nodes}" in out
+
+    def test_same_evaluation_as_python(self):
+        rng = np.random.default_rng(8)
+        fens = [random_position(rng).fen() for _ in range(50)]
+        script = "".join(f"position fen {fen}\neval\n" for fen in fens) + "quit\n"
+        out = subprocess.run(
+            [str(find_rust_engine())], input=script, capture_output=True, text=True, timeout=60
+        ).stdout.split()
+        rust = [int(value) for key, value in zip(out[::2], out[1::2], strict=True) if key == "eval"]
+        assert rust == [evaluate(chess.Board(fen)) for fen in fens]
+
+    def test_mates(self, engine):
+        board = chess.Board("5r1k/6pp/7N/3Q4/8/8/8/6K1 w - - 0 1")  # legs de Philidor
+        info = engine.analyse(board, chess.engine.Limit(time=0.5))
+        assert info["pv"][0] == chess.Move.from_uci("d5g8")
+        assert info["score"].white().mate() == 2
+
+    def test_avoids_stalemate(self, engine):
+        board = chess.Board("7k/8/6K1/8/8/8/8/5Q2 w - - 0 1")
+        assert engine.play(board, chess.engine.Limit(time=0.3)).move == chess.Move.from_uci("f1f8")
+
+    def test_repetition_is_a_draw(self, engine):
+        board = chess.Board("rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+        for uci in ("g1f3", "g8f6", "f3g1", "f6g8"):
+            board.push_uci(uci)
+        infos = engine.analyse(board, chess.engine.Limit(depth=3), multipv=30)
+        scores = {info["pv"][0]: info["score"].relative.score() for info in infos}
+        assert scores[chess.Move.from_uci("g1f3")] == 0
+
+    def test_multipv_and_speed(self, engine):
+        infos = engine.analyse(chess.Board(KIWIPETE), chess.engine.Limit(time=1.0), multipv=3)
+        assert len({info["pv"][0] for info in infos}) == 3
+        assert infos[0]["depth"] >= 6  # le Python v0.2 atteint 3 à 4
+        assert infos[0]["nps"] > 200_000

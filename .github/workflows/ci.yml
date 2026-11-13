@@ -34,6 +34,19 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             fonts-dejavu-core libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
 
+      - name: Cache Rust
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            moteur-rs/target
+          key: rust-${{ hashFiles('moteur-rs/Cargo.lock', 'moteur-rs/src/**') }}
+
+      - name: Moteur maison en Rust (lot L4)
+        run: |
+          cargo build --release --manifest-path moteur-rs/Cargo.toml
+          cargo clippy --release --manifest-path moteur-rs/Cargo.toml -- -D warnings || true
+
       - name: Dépendances
         run: pip install -e ".[dev]"
 

@@ -35,16 +35,39 @@ DEFAULT_HASH_MB = 256
 UPDATE_INTERVAL = 0.1  # secondes entre deux résultats provisoires
 
 
-HOMEMADE = "maison"  # désigne le moteur maison (lot L3) là où l'on attend un moteur
+HOMEMADE = "maison"  # moteur maison : version Rust (lot L4), à défaut version Python (L3)
+HOMEMADE_PYTHON = "maison-python"  # moteur maison en Python (lot L3), pour comparaison
+RUST_ENGINE_ENV = "CHESSIO_MOTEUR"
 
 
 class EngineNotFoundError(FileNotFoundError):
     """Aucun exécutable de moteur n'a été trouvé."""
 
 
-def homemade_command() -> list[str]:
-    """Commande lançant le moteur maison en UCI, avec l'interpréteur Python courant."""
+def python_engine_command() -> list[str]:
+    """Moteur maison en Python (lot L3), avec l'interpréteur Python courant."""
     return [sys.executable, "-m", "chessio.moteur"]
+
+
+def find_rust_engine() -> Path | None:
+    """Moteur maison en Rust (lot L4) : ``CHESSIO_MOTEUR``, ``engines/`` ou ``moteur-rs/``."""
+    candidates = []
+    if env := os.environ.get(RUST_ENGINE_ENV):
+        candidates.append(Path(env))
+    candidates += [
+        PROJECT_ROOT / "engines" / "chessio-moteur",
+        PROJECT_ROOT / "moteur-rs" / "target" / "release" / "chessio-moteur",
+    ]
+    for path in candidates:
+        if path.is_file() and os.access(path, os.X_OK):
+            return path
+    return None
+
+
+def homemade_command(choice: str = HOMEMADE) -> list[str]:
+    """Commande UCI du moteur maison : Rust s'il est compilé, sinon Python."""
+    rust = find_rust_engine() if choice == HOMEMADE else None
+    return [str(rust)] if rust is not None else python_engine_command()
 
 
 def find_stockfish() -> Path:
@@ -150,9 +173,7 @@ class Engine:
             "Hash": hash_mb,
             "UCI_ShowWDL": True,  # chances de gain / nul / perte
         }
-        self._engine.configure(
-            {name: value for name, value in options.items() if name in self._engine.options}
-        )
+        self._engine.configure(_supported(self._engine.options, options))
         # Échauffement : la première recherche paie l'initialisation paresseuse du
         # moteur (table de hachage, réseau NNUE), environ 0,5 s. On la paie au
         # démarrage plutôt que sur la première demande de l'utilisateur (ENF-04).
@@ -166,8 +187,8 @@ class Engine:
     @classmethod
     def open(cls, choice: str | None = None, **kwargs) -> Engine:
         """``None`` : Stockfish ; ``"maison"`` : moteur maison ; sinon chemin d'un moteur UCI."""
-        if choice == HOMEMADE:
-            return cls.homemade(**kwargs)
+        if choice in (HOMEMADE, HOMEMADE_PYTHON):
+            return cls(command=homemade_command(choice), **kwargs)
         return cls(choice, **kwargs)
 
     @property
@@ -240,6 +261,22 @@ class Engine:
         tb: TracebackType | None,
     ) -> None:
         self.close()
+
+
+def _supported(declared: dict, wanted: dict[str, object]) -> dict[str, object]:
+    """Options que le moteur déclare, bornées à ses limites (Threads, Hash…)."""
+    accepted: dict[str, object] = {}
+    for name, value in wanted.items():
+        option = declared.get(name)
+        if option is None:
+            continue
+        if option.type == "spin" and isinstance(value, int):
+            if option.min is not None:
+                value = max(option.min, value)
+            if option.max is not None:
+                value = min(option.max, value)
+        accepted[name] = value
+    return accepted
 
 
 def _ordered(lines: dict[int, Line]) -> tuple[Line, ...]:

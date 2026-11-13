@@ -20,7 +20,7 @@ Le cahier des charges complet est dans
 | L1 — Chaîne minimale | Capture → coup, un thème, orientation automatique | ✅ recette passée : 20/20 captures réelles |
 | L2 — Vision robuste | Classifieur ONNX, orientation, correction | à faire |
 | L3 — Moteur maison v1 | Python, négamax alpha-bêta, UCI | ✅ perft exact, Elo mesuré |
-| L4 — Moteur maison v2 | Rust + shakmaty, réglage Texel | à faire |
+| L4 — Moteur maison v2 | Rust + shakmaty, réglage Texel | ✅ ≈ 2 400 Elo (réglage Texel à venir) |
 | L5 — Évaluation apprise | Petit réseau NNUE | à faire |
 | L6 — Finition | AppImage, documentation, recette | à faire |
 
@@ -70,20 +70,34 @@ Raccourcis : Ctrl+V coller, Ctrl+O ouvrir, W / B trait, F retourner l'échiquier
 Espace approfondir, Échap arrêter, Ctrl+Maj+C copier la FEN. La FEN est aussi
 modifiable directement sous l'échiquier (Entrée pour analyser).
 
-### Moteur maison (lot L3)
+### Moteur maison (lots L3 et L4)
 
-Le projet a son propre moteur, écrit en Python : négamax alpha-bêta,
-approfondissement itératif, table de transposition, quiescence, ordre des coups
-(MVV-LVA, coups tueurs, historique), tables pièce-case interpolées milieu /
-finale. Il parle UCI comme Stockfish et se choisit dans l'interface (Réglages →
-Moteur d'analyse) ou en ligne de commande avec `--moteur maison`. Bien plus
-faible que Stockfish (voir la recette), il sert à mettre au point les
-algorithmes avant le portage en Rust (lot L4).
+Le projet a son propre moteur d'échecs, en deux versions de même logique :
+
+- **v0.3 en Rust** (lot L4, `moteur-rs/`) : génération des coups par bitboards
+  et tables d'attaque « magiques » (shakmaty), hachage de Zobrist ; environ
+  1,3 million de positions par seconde, **≈ 2 400 Elo** ;
+- **v0.2 en Python** (lot L3, `chessio/moteur/`) : sert à mettre au point les
+  algorithmes, ≈ 1 700 Elo.
+
+Recherche : négamax alpha-bêta, approfondissement itératif avec fenêtres
+d'aspiration, recherche à fenêtre nulle (PVS), table de transposition, coup nul,
+réductions des coups tardifs (LMR), élagages statique et de frontière,
+quiescence, ordre des coups (MVV-LVA, coups tueurs, historique). Évaluation :
+matériel, tables pièce-case interpolées milieu / finale, pions passés, doublés et
+isolés, tours sur colonne ouverte, abri du roi, mobilité.
+
+Les deux parlent UCI comme Stockfish. « maison » (interface : Réglages → Moteur
+d'analyse ; ligne de commande : `--moteur maison`) désigne la version Rust si
+elle est compilée, sinon la version Python (`--moteur maison-python` la force).
 
 ```bash
-.venv/bin/python -m chessio.moteur            # moteur UCI (pour une interface d'échecs)
+# Compiler le moteur Rust (Rust installé avec rustup)
+cargo build --release --manifest-path moteur-rs/Cargo.toml
+
 .venv/bin/chessio analyse "<FEN>" --moteur maison
-printf 'position startpos\ngo perft 5\nquit\n' | .venv/bin/python -m chessio.moteur
+printf 'position startpos\ngo perft 5\nquit\n' | moteur-rs/target/release/chessio-moteur
+.venv/bin/python -m chessio.moteur            # version Python, en UCI
 ```
 
 **Match en direct** : `chessio match` ouvre une fenêtre où le moteur maison affronte
@@ -173,6 +187,20 @@ L'échelle est celle du réglage `UCI_Elo` de Stockfish, à 0,3 s par coup : c'e
 une estimation de niveau, pas un classement officiel. La vitesse du moteur Python
 (~25 000 positions/s, profondeur 5 en une seconde) est sa principale limite ; le
 portage en Rust (lot L4) vise surtout à la multiplier.
+
+Résultat de la recette L4 (13/11/2026, moteur Rust 0.3, même protocole) :
+
+| Test | Résultat |
+|---|---|
+| Perft, position initiale, profondeur 5 | 4 865 609 nœuds, exact (68 ms, 210 × plus rapide qu'en Python) |
+| Évaluation identique à la version Python | 200 positions sur 200 |
+| Vitesse et profondeur en 1 s | ≈ 1,3 million de positions/s, profondeur 9 à 11 |
+| Match contre Stockfish bridé à 2 200 Elo (20 parties) | 14/20 (+13 =2 −5) |
+| Match contre Stockfish bridé à 2 500 Elo (20 parties) | 8,5/20 (+7 =3 −10) |
+| **Elo estimé** (40 parties combinées) | **≈ 2 400** (2 284 à 2 521 à 95 %) |
+
+Objectif fixé après le lot L3 : plus de 2 200 Elo, atteint. Le réglage Texel de
+l'évaluation, prévu au lot L4, reste à faire.
 
 ## Licence
 
