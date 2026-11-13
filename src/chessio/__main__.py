@@ -58,7 +58,7 @@ def _analyse_board(board: chess.Board, args: argparse.Namespace) -> int:
     trait = "Blancs" if board.turn == chess.WHITE else "Noirs"
     print(f"FEN   : {board.fen()}")
     print(f"Trait : {trait}")
-    with Engine(args.moteur) as engine:
+    with Engine.open(args.moteur) as engine:
         analysis = engine.analyse(board, time_limit=args.temps, multipv=args.multipv)
         print(f"Moteur: {engine.name} ({analysis.elapsed:.2f} s)")
 
@@ -127,6 +127,43 @@ def _cmd_capture(args: argparse.Namespace) -> int:
     return _analyse_board(result.board, args)
 
 
+def _cmd_match(args: argparse.Namespace) -> int:
+    from chessio.match import Match, MatchSettings
+
+    settings = MatchSettings(
+        tested=args.moteur,
+        reference=args.adversaire,
+        elo=args.elo,
+        games=args.parties,
+        seconds=args.temps,
+    )
+    if not args.sans_fenetre:
+        from chessio.ui.app import create_app
+        from chessio.ui.match import MatchWindow
+
+        app = create_app([])
+        window = MatchWindow(settings, delay=args.delai, pgn=args.pgn)
+        window.resize(1320, 880)
+        window.show()
+        return app.exec()
+
+    def on_game(result) -> None:
+        side = "Blancs" if result.tested_white else "Noirs"
+        print(
+            f"partie {result.number:2d} : {result.result:7s} ({side}, {result.termination}, "
+            f"{result.plies} demi-coups)",
+            flush=True,
+        )
+        if args.pgn:
+            with args.pgn.open("a", encoding="utf-8") as fh:
+                print(result.game, file=fh, end="\n\n")
+
+    summary = Match(settings).run(on_game=on_game)
+    print(f"\n{summary.tested} contre {summary.reference}")
+    print(summary.text())
+    return 0
+
+
 def _cmd_gui(args: argparse.Namespace) -> int:
     from chessio.ui.app import main as gui_main
 
@@ -138,7 +175,10 @@ def _add_engine_options(parser: argparse.ArgumentParser) -> None:
         "--temps", type=float, default=DEFAULT_TIME, help="secondes de réflexion (0,1 à 10)"
     )
     parser.add_argument("--multipv", type=int, default=1, help="nombre de coups proposés")
-    parser.add_argument("--moteur", help="chemin d'un moteur UCI (Stockfish par défaut)")
+    parser.add_argument(
+        "--moteur",
+        help="« maison » pour le moteur maison, ou chemin d'un moteur UCI (Stockfish par défaut)",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -174,6 +214,21 @@ def build_parser() -> argparse.ArgumentParser:
     capture.add_argument("--sans-moteur", action="store_true", help="afficher la FEN seulement")
     _add_engine_options(capture)
     capture.set_defaults(func=_cmd_capture)
+
+    match = sub.add_parser("match", help="match entre deux moteurs, en direct à l'écran")
+    match.add_argument("--moteur", default="maison", help="moteur testé (« maison » par défaut)")
+    match.add_argument(
+        "--adversaire", default="stockfish", help="adversaire (« stockfish » ou chemin UCI)"
+    )
+    match.add_argument(
+        "--elo", type=int, help="Elo imposé à l'adversaire (Stockfish : 1320 à 3190)"
+    )
+    match.add_argument("--parties", type=int, default=20, help="nombre de parties")
+    match.add_argument("--temps", type=float, default=0.3, help="secondes de réflexion par coup")
+    match.add_argument("--delai", type=float, default=0.5, help="pause d'affichage entre les coups")
+    match.add_argument("--pgn", type=Path, help="fichier où ajouter les parties jouées")
+    match.add_argument("--sans-fenetre", action="store_true", help="résultats en texte seulement")
+    match.set_defaults(func=_cmd_match)
 
     gui = sub.add_parser("gui", help="interface graphique")
     gui.set_defaults(func=_cmd_gui)

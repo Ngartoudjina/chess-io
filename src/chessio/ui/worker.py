@@ -27,18 +27,26 @@ class Worker(QObject):
     calibrated = Signal(object)  # TemplateSet
     failed = Signal(int, str)  # génération, message
 
-    def __init__(self) -> None:
+    def __init__(self, engine_choice: str | None = None) -> None:
         super().__init__()
         self.engine: Engine | None = None
+        self.engine_choice = engine_choice  # None : Stockfish ; « maison » : moteur maison
         self.latest = 0  # écrit par le fil de l'interface
 
     @Slot()
     def start_engine(self) -> None:
         try:
-            self.engine = Engine()
+            self.engine = Engine.open(self.engine_choice)
             self.engine_ready.emit(self.engine.name)
         except Exception as exc:  # noqa: BLE001 — remonté à l'utilisateur
             self.engine_failed.emit(str(exc))
+
+    @Slot(object)
+    def switch_engine(self, choice: str | None) -> None:
+        """Change de moteur (EF-10) : arrête l'actuel, lance le nouveau."""
+        self.stop()
+        self.engine_choice = choice
+        self.start_engine()
 
     @Slot(int, object, object, object, object, object, object)
     def recognize(self, generation, image, turn, default_turn, templates, orientation, region):

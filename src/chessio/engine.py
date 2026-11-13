@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -34,8 +35,16 @@ DEFAULT_HASH_MB = 256
 UPDATE_INTERVAL = 0.1  # secondes entre deux résultats provisoires
 
 
+HOMEMADE = "maison"  # désigne le moteur maison (lot L3) là où l'on attend un moteur
+
+
 class EngineNotFoundError(FileNotFoundError):
     """Aucun exécutable de moteur n'a été trouvé."""
+
+
+def homemade_command() -> list[str]:
+    """Commande lançant le moteur maison en UCI, avec l'interpréteur Python courant."""
+    return [sys.executable, "-m", "chessio.moteur"]
 
 
 def find_stockfish() -> Path:
@@ -125,11 +134,17 @@ class Engine:
         self,
         path: str | Path | None = None,
         *,
+        command: list[str] | None = None,
         threads: int | None = None,
         hash_mb: int = DEFAULT_HASH_MB,
     ) -> None:
-        self.path = Path(path) if path is not None else find_stockfish()
-        self._engine = chess.engine.SimpleEngine.popen_uci(str(self.path))
+        """Lance Stockfish (``path`` ou recherche automatique), ou la ``command`` donnée."""
+        if command is None:
+            self.path = Path(path) if path is not None else find_stockfish()
+            command = [str(self.path)]
+        else:
+            self.path = Path(command[-1])
+        self._engine = chess.engine.SimpleEngine.popen_uci(command)
         options = {
             "Threads": threads or default_threads(),
             "Hash": hash_mb,
@@ -142,6 +157,18 @@ class Engine:
         # moteur (table de hachage, réseau NNUE), environ 0,5 s. On la paie au
         # démarrage plutôt que sur la première demande de l'utilisateur (ENF-04).
         self._engine.analyse(chess.Board(), chess.engine.Limit(depth=1))
+
+    @classmethod
+    def homemade(cls, **kwargs) -> Engine:
+        """Le moteur maison (Python, lot L3), piloté en UCI comme Stockfish."""
+        return cls(command=homemade_command(), **kwargs)
+
+    @classmethod
+    def open(cls, choice: str | None = None, **kwargs) -> Engine:
+        """``None`` : Stockfish ; ``"maison"`` : moteur maison ; sinon chemin d'un moteur UCI."""
+        if choice == HOMEMADE:
+            return cls.homemade(**kwargs)
+        return cls(choice, **kwargs)
 
     @property
     def name(self) -> str:

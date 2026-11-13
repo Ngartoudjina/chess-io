@@ -19,7 +19,7 @@ Le cahier des charges complet est dans
 | L0 — Socle | Dépôt, environnement, FEN → Stockfish, CI | ✅ terminé |
 | L1 — Chaîne minimale | Capture → coup, un thème, orientation automatique | ✅ recette passée : 20/20 captures réelles |
 | L2 — Vision robuste | Classifieur ONNX, orientation, correction | à faire |
-| L3 — Moteur maison v1 | Python, négamax alpha-bêta, UCI | à faire |
+| L3 — Moteur maison v1 | Python, négamax alpha-bêta, UCI | ✅ perft exact, Elo mesuré |
 | L4 — Moteur maison v2 | Rust + shakmaty, réglage Texel | à faire |
 | L5 — Évaluation apprise | Petit réseau NNUE | à faire |
 | L6 — Finition | AppImage, documentation, recette | à faire |
@@ -70,6 +70,31 @@ Raccourcis : Ctrl+V coller, Ctrl+O ouvrir, W / B trait, F retourner l'échiquier
 Espace approfondir, Échap arrêter, Ctrl+Maj+C copier la FEN. La FEN est aussi
 modifiable directement sous l'échiquier (Entrée pour analyser).
 
+### Moteur maison (lot L3)
+
+Le projet a son propre moteur, écrit en Python : négamax alpha-bêta,
+approfondissement itératif, table de transposition, quiescence, ordre des coups
+(MVV-LVA, coups tueurs, historique), tables pièce-case interpolées milieu /
+finale. Il parle UCI comme Stockfish et se choisit dans l'interface (Réglages →
+Moteur d'analyse) ou en ligne de commande avec `--moteur maison`. Bien plus
+faible que Stockfish (voir la recette), il sert à mettre au point les
+algorithmes avant le portage en Rust (lot L4).
+
+```bash
+.venv/bin/python -m chessio.moteur            # moteur UCI (pour une interface d'échecs)
+.venv/bin/chessio analyse "<FEN>" --moteur maison
+printf 'position startpos\ngo perft 5\nquit\n' | .venv/bin/python -m chessio.moteur
+```
+
+**Match en direct** : `chessio match` ouvre une fenêtre où le moteur maison affronte
+Stockfish, bridé au niveau voulu, coup par coup (pause, vitesse réglable). Le score
+donne une estimation de son Elo avec un intervalle de confiance à 95 %.
+
+```bash
+.venv/bin/chessio match --elo 1800 --parties 20 --temps 0.3          # fenêtre en direct
+.venv/bin/chessio match --elo 1800 --sans-fenetre --pgn parties.pgn  # en texte
+```
+
 ### Ligne de commande
 
 ```bash
@@ -102,13 +127,14 @@ src/chessio/
   vision/synthetic.py  captures synthétiques pour les tests
   recognize.py         capture + trait → position validée (seule jonction vision/moteur)
   position.py          construction de la FEN (roque déduit) et validation (EF-06, EF-07)
+  moteur/              moteur maison v1 : évaluation, recherche, perft, protocole UCI (L3)
   engine.py            moteur UCI dans un processus séparé : analyse progressive,
                        interruptible, MultiPV, chances gain/nulle/perte (EF-08, EF-10)
   ui/                  interface PySide6 : fenêtre, composants, style, travail en arrière-plan
                        (EF-01, EF-03, EF-07, EF-09, EF-11)
   __main__.py          ligne de commande
 tests/                 pytest (règles, vision, moteur, CLI, interface hors écran)
-scripts/               téléchargement de Stockfish, recette sur captures réelles
+scripts/               téléchargement de Stockfish, recette sur captures réelles, matchs
 ```
 
 ## Tests
@@ -131,6 +157,22 @@ pièces de Chess.com ne sont pas libres.
 Résultat de la recette L1 (13/11/2026, thème vert, cases de 95 px) : 20/20
 positions exactes, 1 280/1 280 cases, orientation 20/20 par les coordonnées
 (dont 7 captures où le camp au trait n'est pas en bas), 450 ms au plus.
+
+Résultat de la recette L3 (13/11/2026, moteur maison 0.1) :
+
+| Test | Résultat |
+|---|---|
+| Perft, position initiale, profondeur 3 | 8 902 nœuds, exact |
+| Perft, position initiale, profondeur 5 | 4 865 609 nœuds, exact (14 s) |
+| Perft Kiwipete, profondeur 4 | 4 085 603 nœuds, exact |
+| Match contre Stockfish bridé à 1 320 Elo (20 parties, 0,3 s/coup) | 18/20 (+18 =0 −2) |
+| Match contre Stockfish bridé à 1 800 Elo (20 parties, 0,3 s/coup) | 6,5/20 (+3 =7 −10) |
+| **Elo estimé** (40 parties combinées) | **≈ 1 680** (1 550 à 1 820 à 95 %) |
+
+L'échelle est celle du réglage `UCI_Elo` de Stockfish, à 0,3 s par coup : c'est
+une estimation de niveau, pas un classement officiel. La vitesse du moteur Python
+(~25 000 positions/s, profondeur 5 en une seconde) est sa principale limite ; le
+portage en Rust (lot L4) vise surtout à la multiplier.
 
 ## Licence
 

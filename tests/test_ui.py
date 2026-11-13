@@ -10,7 +10,7 @@ import pytest  # noqa: E402
 
 pytest.importorskip("PySide6.QtWidgets")
 
-from chessio.engine import EngineNotFoundError, find_stockfish  # noqa: E402
+from chessio.engine import HOMEMADE, EngineNotFoundError, find_stockfish  # noqa: E402
 from chessio.paths import templates_path  # noqa: E402
 from chessio.vision.board import crop_board, locate_board, split_cells  # noqa: E402
 from chessio.vision.synthetic import render_board  # noqa: E402
@@ -31,6 +31,10 @@ def make_window(app, tmp_path, monkeypatch):
     except EngineNotFoundError:
         pytest.skip("Stockfish absent")
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))  # calibration isolée du poste
+    from PySide6.QtCore import QSettings
+
+    # Réglages (moteur choisi, avertissement accepté) isolés eux aussi.
+    QSettings.setPath(QSettings.Format.NativeFormat, QSettings.Scope.UserScope, str(tmp_path))
     from chessio.ui.window import MainWindow
 
     windows = []
@@ -109,3 +113,16 @@ def test_fen_entry_is_analysed(app, make_window):
     assert pump(app, analysed(window))
     assert window.analysis.best.uci == "a1a8"
     assert window.best_label.text() == "♖a8#"
+
+
+def test_switch_to_homemade_engine(app, make_window):
+    window = make_window(calibrated=True)
+    assert pump(app, lambda: window.engine_ready)
+    window.engine_choice.set_value(HOMEMADE)
+    window._on_engine_changed(HOMEMADE)
+    assert pump(app, lambda: window.engine_ready)
+    assert "Chessio Moteur" in window.engine_chip.text()
+    window.fen_edit.setText("6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1")
+    window._load_fen()
+    assert pump(app, analysed(window))
+    assert window.analysis.best.uci == "a1a8"

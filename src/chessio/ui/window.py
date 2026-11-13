@@ -7,7 +7,7 @@ import time
 import chess
 import chess.pgn
 import numpy as np
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QPoint, QRect, QSettings, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QGuiApplication, QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QDialog,
@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from chessio import __version__
-from chessio.engine import DEFAULT_TIME, MAX_TIME, Analysis
+from chessio.engine import DEFAULT_TIME, HOMEMADE, MAX_TIME, Analysis
 from chessio.paths import templates_path
 from chessio.position import validate
 from chessio.recognize import (
@@ -179,6 +179,7 @@ class MainWindow(QMainWindow):
     request_recognize = Signal(int, object, object, object, object, object, object)
     request_analyse = Signal(int, str, float, int)
     request_calibrate = Signal(int, object)
+    request_engine = Signal(object)
     request_stop = Signal()
 
     def __init__(self) -> None:
@@ -205,6 +206,7 @@ class MainWindow(QMainWindow):
         self.engine_ready = False
         self.calibrating = False
         self._pending_analysis = False
+        self._settings = QSettings("chessio", "chessio")
         self._analysis_started = 0.0
         self._analysis_seconds = DEFAULT_TIME
 
@@ -437,6 +439,15 @@ class MainWindow(QMainWindow):
     def _build_settings_card(self) -> QFrame:
         frame, layout = card(spacing=8)
         layout.addWidget(caption("Réglages"))
+        layout.addWidget(QLabel("Moteur d'analyse"))
+        self.engine_choice = Segmented([("Stockfish", None), ("Maison (Python)", HOMEMADE)])
+        self.engine_choice.setToolTip(
+            "Stockfish : le plus fort. Maison : le moteur du projet (lot L3), bien plus faible."
+        )
+        self.engine_choice.set_value(self._settings.value("engine", None) or None)
+        self.engine_choice.changed.connect(self._on_engine_changed)
+        layout.addWidget(self.engine_choice)
+        layout.addSpacing(6)
         time_row = QHBoxLayout()
         time_row.addWidget(QLabel("Temps de réflexion"))
         time_row.addStretch(1)
@@ -514,12 +525,13 @@ class MainWindow(QMainWindow):
 
     def _start_worker(self) -> None:
         self.worker_thread = QThread(self)
-        self.worker = Worker()
+        self.worker = Worker(self.engine_choice.value())
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.start_engine)
         self.request_recognize.connect(self.worker.recognize)
         self.request_analyse.connect(self.worker.analyse)
         self.request_calibrate.connect(self.worker.calibrate)
+        self.request_engine.connect(self.worker.switch_engine)
         self.request_stop.connect(self.worker.stop, Qt.ConnectionType.BlockingQueuedConnection)
         self.worker.engine_ready.connect(self._on_engine_ready)
         self.worker.engine_failed.connect(self._on_engine_failed)
@@ -562,6 +574,17 @@ class MainWindow(QMainWindow):
         if self._pending_analysis:
             self._pending_analysis = False
             self._refresh()
+
+    def _on_engine_changed(self, choice: str | None) -> None:
+        self._settings.setValue("engine", choice or "")
+        self._next_generation()  # abandonne l'analyse en cours
+        self.engine_ready = False
+        self.engine_chip.setText("●  Moteur : démarrage…")
+        self.engine_chip.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent;")
+        if self.board is not None:
+            self._pending_analysis = True
+            self._clear_analysis("Changement de moteur…")
+        self.request_engine.emit(choice)
 
     def _on_engine_failed(self, message: str) -> None:
         self.engine_chip.setText("●  Moteur indisponible")
