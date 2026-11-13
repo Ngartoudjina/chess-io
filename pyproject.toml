@@ -11,6 +11,9 @@ license = "GPL-3.0-or-later"
 requires-python = ">=3.12"
 dependencies = [
     "chess>=1.11",
+    "numpy>=2",
+    "pillow>=10",
+    "PySide6-Essentials>=6.8",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +24,9 @@ dev = [
 
 [project.scripts]
 chessio = "chessio.__main__:main"
+
+[project.gui-scripts]
+chessio-gui = "chessio.gui:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/chessio"]

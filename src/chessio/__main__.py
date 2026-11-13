@@ -1,15 +1,19 @@
-"""Interface en ligne de commande du lot L0 : FEN → meilleur coup.
+"""Interface en ligne de commande : FEN ou capture → meilleur coup.
 
 Exemples ::
 
     chessio analyse "6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1"
     chessio analyse rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR --trait b --multipv 3
+    chessio calibrer position_initiale.png
+    chessio capture partie.png --trait w
+    chessio gui
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 import chess
 
@@ -35,15 +39,22 @@ def _board_from_args(fen: str, turn: str | None) -> chess.Board:
     return board
 
 
+def _print_issues(issues) -> int:
+    print("Position invalide, aucun coup proposé :", file=sys.stderr)
+    for issue in issues:
+        print(f"  - {issue}", file=sys.stderr)
+    return 2
+
+
 def _cmd_analyse(args: argparse.Namespace) -> int:
     board = _board_from_args(args.fen, args.trait)
     issues = validate(board)
     if issues:
-        print("Position invalide, aucun coup proposé :", file=sys.stderr)
-        for issue in issues:
-            print(f"  - {issue}", file=sys.stderr)
-        return 2
+        return _print_issues(issues)
+    return _analyse_board(board, args)
 
+
+def _analyse_board(board: chess.Board, args: argparse.Namespace) -> int:
     trait = "Blancs" if board.turn == chess.WHITE else "Noirs"
     print(f"FEN   : {board.fen()}")
     print(f"Trait : {trait}")
@@ -62,6 +73,62 @@ def _cmd_analyse(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_calibrer(args: argparse.Namespace) -> int:
+    from chessio.paths import templates_path
+    from chessio.vision.board import crop_board, load_image, locate_board, split_cells
+    from chessio.vision.templates import calibrate
+
+    image = load_image(args.image)
+    region = locate_board(image)
+    templates = calibrate(split_cells(crop_board(image, region)))
+    path = args.sortie or templates_path()
+    templates.save(path)
+    print(f"Plateau trouvé : x={region.x} y={region.y} côté={region.size} px")
+    print(f"Calibration enregistrée : {path}")
+    return 0
+
+
+def _cmd_capture(args: argparse.Namespace) -> int:
+    from chessio.paths import templates_path
+    from chessio.recognize import Orientation, recognize
+    from chessio.vision.board import load_image
+    from chessio.vision.templates import TemplateSet
+
+    path = args.gabarits or templates_path()
+    if not path.exists():
+        raise ValueError(f"Pas de calibration ({path}) : lancez d'abord « chessio calibrer »")
+    result = recognize(
+        load_image(args.image),
+        args.trait,
+        TemplateSet.load(path),
+        orientation=Orientation(args.orientation),
+    )
+    print(f"Reconnaissance : {result.elapsed * 1000:.0f} ms")
+    bottom = "Blancs" if result.white_bottom else "Noirs"
+    print(f"Orientation : {bottom} en bas (d'après : {result.orientation_source})")
+    if not result.ok:
+        print(f"FEN lue : {result.board.fen()}", file=sys.stderr)
+        return _print_issues(result.issues)
+    if args.sans_moteur:
+        print(f"FEN   : {result.board.fen()}")
+        return 0
+    return _analyse_board(result.board, args)
+
+
+def _cmd_gui(args: argparse.Namespace) -> int:
+    from chessio.gui import main as gui_main
+
+    return gui_main()
+
+
+def _add_engine_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--temps", type=float, default=DEFAULT_TIME, help="secondes de réflexion (0,1 à 10)"
+    )
+    parser.add_argument("--multipv", type=int, default=1, help="nombre de coups proposés")
+    parser.add_argument("--moteur", help="chemin d'un moteur UCI (Stockfish par défaut)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="chessio", description=WARNING)
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -70,12 +137,30 @@ def build_parser() -> argparse.ArgumentParser:
     analyse = sub.add_parser("analyse", help="meilleur coup pour une FEN")
     analyse.add_argument("fen", help="FEN complète, ou placement seul avec --trait")
     analyse.add_argument("--trait", choices=["w", "b"], help="couleur au trait")
-    analyse.add_argument(
-        "--temps", type=float, default=DEFAULT_TIME, help="secondes de réflexion (0,1 à 10)"
-    )
-    analyse.add_argument("--multipv", type=int, default=1, help="nombre de coups proposés")
-    analyse.add_argument("--moteur", help="chemin d'un moteur UCI (Stockfish par défaut)")
+    _add_engine_options(analyse)
     analyse.set_defaults(func=_cmd_analyse)
+
+    calibrer = sub.add_parser("calibrer", help="apprendre le thème sur la position initiale")
+    calibrer.add_argument("image", help="capture de la position initiale (PNG ou JPEG)")
+    calibrer.add_argument("--sortie", type=Path, help="fichier de gabarits à écrire")
+    calibrer.set_defaults(func=_cmd_calibrer)
+
+    capture = sub.add_parser("capture", help="meilleur coup à partir d'une capture")
+    capture.add_argument("image", help="capture d'écran (PNG ou JPEG)")
+    capture.add_argument("--trait", choices=["w", "b"], required=True, help="couleur au trait")
+    capture.add_argument(
+        "--orientation",
+        choices=["auto", "w", "b"],
+        default="auto",
+        help="camp affiché en bas (auto : le camp au trait)",
+    )
+    capture.add_argument("--gabarits", type=Path, help="fichier de calibration")
+    capture.add_argument("--sans-moteur", action="store_true", help="afficher la FEN seulement")
+    _add_engine_options(capture)
+    capture.set_defaults(func=_cmd_capture)
+
+    gui = sub.add_parser("gui", help="interface graphique")
+    gui.set_defaults(func=_cmd_gui)
     return parser
 
 
