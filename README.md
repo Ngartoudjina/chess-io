@@ -37,39 +37,48 @@ ou s'il est présent dans le `PATH`.
 
 ## Utilisation
 
-### Première fois : calibration
-
-Faites une capture d'écran de la **position initiale** dans votre thème Chess.com
-habituel, puis :
-
-```bash
-.venv/bin/chessio calibrer position_initiale.png
-```
-
-Les gabarits des 12 pièces sont enregistrés dans `~/.local/share/chessio/`.
-(Dans l'interface : Fichier → Calibrer.)
-
 ### Interface graphique
 
 ```bash
 .venv/bin/chessio gui
 ```
 
-Collez une capture (Ctrl+V), glissez-la ou ouvrez-la (Ctrl+O), indiquez le trait
-(touches W / B) : la position est reconnue puis analysée, le meilleur coup est
-fléché sur le mini-échiquier. Les cases douteuses sont marquées en rouge et aucun
-coup n'est proposé tant qu'elles ne sont pas corrigées (champ FEN modifiable).
+**Un seul geste : collez la capture** (Ctrl+V), glissez-la dans la fenêtre ou
+ouvrez-la (Ctrl+O). Tout le reste est automatique :
 
-L'orientation (Blancs ou Noirs en bas) est lue sur les **coordonnées** que
-Chess.com écrit sur les cases : gardez le réglage « Coordonnées : à l'intérieur
-du plateau ». Sans elles, l'orientation est déduite de la structure de pions ; si
-elle reste incertaine, aucun coup n'est proposé avant que vous la précisiez.
+- **Première utilisation** : la première capture doit montrer la **position
+  initiale** dans votre thème Chess.com habituel ; Chessio y apprend vos pièces et
+  vos couleurs, une fois pour toutes (Menu ⋮ → Recalibrer pour recommencer).
+- **Orientation** (Blancs ou Noirs en bas) : lue sur les coordonnées écrites sur
+  les cases — gardez le réglage Chess.com « Coordonnées : à l'intérieur du
+  plateau ». À défaut, déduite de la structure de pions ; sinon Chessio vous la
+  demande.
+- **Trait** : déduit du **dernier coup surligné** (ou d'un roi en échec) ; sinon
+  choisissez-le (boutons Blancs / Noirs, touches W / B), l'indication passe en
+  orange pour vous le rappeler.
+- **Prise en passant** : déduite du dernier coup quand un pion vient d'avancer de
+  deux cases.
+- **Analyse progressive** : le meilleur coup s'affiche aussitôt et s'affine en
+  direct ; barre d'évaluation, chances gain / nulle / perte, trois coups au choix
+  (cliquez sur une ligne pour voir sa flèche). « Approfondir » (Espace) analyse
+  10 s, Échap arrête.
+- **Correction en un clic** : une case incertaine est marquée en rouge et aucun
+  coup n'est proposé tant qu'elle n'est pas vérifiée ; cliquez sur une case pour
+  choisir la bonne pièce.
+
+Raccourcis : Ctrl+V coller, Ctrl+O ouvrir, W / B trait, F retourner l'échiquier,
+Espace approfondir, Échap arrêter, Ctrl+Maj+C copier la FEN. La FEN est aussi
+modifiable directement sous l'échiquier (Entrée pour analyser).
 
 ### Ligne de commande
 
 ```bash
-# Capture d'écran → meilleur coup
-.venv/bin/chessio capture partie.png --trait w
+# Calibration (une fois) sur une capture de la position initiale
+.venv/bin/chessio calibrer position_initiale.png
+
+# Capture d'écran → meilleur coup (trait déduit du dernier coup surligné)
+.venv/bin/chessio capture partie.png
+.venv/bin/chessio capture partie.png --trait b --multipv 3   # trait imposé
 
 # FEN complète
 .venv/bin/chessio analyse "6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1"
@@ -88,14 +97,17 @@ src/chessio/
   vision/board.py      localisation du plateau, découpe en 64 cases (EF-02)
   vision/templates.py  calibration et classification par gabarits (EF-05)
   vision/orientation.py  orientation par les coordonnées affichées (EF-04)
+  vision/lastmove.py   dernier coup surligné : trait et prise en passant
   vision/ops.py        opérations d'image communes (NumPy)
   vision/synthetic.py  captures synthétiques pour les tests
   recognize.py         capture + trait → position validée (seule jonction vision/moteur)
   position.py          construction de la FEN (roque déduit) et validation (EF-06, EF-07)
-  engine.py            moteur UCI dans un processus séparé, temps 0,1–10 s, MultiPV (EF-08, EF-10)
-  gui.py               interface PySide6 (EF-01, EF-03, EF-09)
+  engine.py            moteur UCI dans un processus séparé : analyse progressive,
+                       interruptible, MultiPV, chances gain/nulle/perte (EF-08, EF-10)
+  ui/                  interface PySide6 : fenêtre, composants, style, travail en arrière-plan
+                       (EF-01, EF-03, EF-07, EF-09, EF-11)
   __main__.py          ligne de commande
-tests/                 pytest (règles, vision, moteur, CLI)
+tests/                 pytest (règles, vision, moteur, CLI, interface hors écran)
 scripts/               téléchargement de Stockfish, recette sur captures réelles
 ```
 

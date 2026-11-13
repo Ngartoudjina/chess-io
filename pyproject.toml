@@ -26,7 +26,7 @@ dev = [
 chessio = "chessio.__main__:main"
 
 [project.gui-scripts]
-chessio-gui = "chessio.gui:main"
+chessio-gui = "chessio.ui.app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/chessio"]

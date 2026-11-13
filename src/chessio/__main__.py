@@ -106,6 +106,18 @@ def _cmd_capture(args: argparse.Namespace) -> int:
     print(f"Reconnaissance : {result.elapsed * 1000:.0f} ms")
     bottom = "Blancs" if result.white_bottom else "Noirs"
     print(f"Orientation : {bottom} en bas (d'après : {result.orientation_source})")
+    if args.trait is None and not result.turn_detected:
+        print(
+            "Trait non détecté (aucun dernier coup surligné ni roi en échec) : "
+            "précisez-le avec --trait w|b",
+            file=sys.stderr,
+        )
+        return 2
+    if result.turn_detected:
+        mover = "Blancs" if result.board.turn == chess.WHITE else "Noirs"
+        print(f"Trait détecté : {mover} (d'après : {result.turn_source})")
+    for note in result.notes:
+        print(f"Remarque : {note}", file=sys.stderr)
     if not result.ok:
         print(f"FEN lue : {result.board.fen()}", file=sys.stderr)
         return _print_issues(result.issues)
@@ -116,7 +128,7 @@ def _cmd_capture(args: argparse.Namespace) -> int:
 
 
 def _cmd_gui(args: argparse.Namespace) -> int:
-    from chessio.gui import main as gui_main
+    from chessio.ui.app import main as gui_main
 
     return gui_main()
 
@@ -147,12 +159,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     capture = sub.add_parser("capture", help="meilleur coup à partir d'une capture")
     capture.add_argument("image", help="capture d'écran (PNG ou JPEG)")
-    capture.add_argument("--trait", choices=["w", "b"], required=True, help="couleur au trait")
+    capture.add_argument(
+        "--trait",
+        choices=["w", "b"],
+        help="couleur au trait (par défaut : déduite du dernier coup surligné)",
+    )
     capture.add_argument(
         "--orientation",
         choices=["auto", "w", "b"],
         default="auto",
-        help="camp affiché en bas (auto : le camp au trait)",
+        help="camp affiché en bas (auto : d'après les coordonnées)",
     )
     capture.add_argument("--gabarits", type=Path, help="fichier de calibration")
     capture.add_argument("--sans-moteur", action="store_true", help="afficher la FEN seulement")
