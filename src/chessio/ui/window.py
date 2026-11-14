@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from chessio import __version__
+from chessio.capture import phones
 from chessio.engine import DEFAULT_TIME, HOMEMADE, Analysis
 from chessio.paths import templates_path
 from chessio.position import validate
@@ -44,6 +45,7 @@ from chessio.recognize import (
     turn_from_check,
 )
 from chessio.ui.notation import figurine, figurine_line
+from chessio.ui.screen import ScreenCapturer
 from chessio.ui.style import ARROW_NAMES, PALETTE, app_icon, icon, piece_icon
 from chessio.ui.widgets import (
     Banner,
@@ -181,12 +183,18 @@ class MainWindow(QMainWindow):
     request_recognize = Signal(int, object, object, object, object, object, object)
     request_analyse = Signal(int, str, float, int)
     request_calibrate = Signal(int, object)
+    request_phone = Signal(int, str)
     request_engine = Signal(object)
     request_stop = Signal()
 
-    def __init__(self) -> None:
+    def __init__(self, offer_capture: bool = False) -> None:
         super().__init__()
         self.setWindowTitle("Chessio — meilleur coup")
+        # Mode capture (parties contre les bots) : source et camp du joueur.
+        self.capture_source: str | None = None  # « phone » ou « screen »
+        self.phone_serial = ""
+        self.screen_zone: BoardRegion | None = None  # zone de l'écran contenant l'échiquier
+        self.my_color: chess.Color | None = None
         self.setWindowIcon(app_icon())
         self.setAcceptDrops(True)
         self.setMinimumSize(1000, 680)
@@ -215,7 +223,12 @@ class MainWindow(QMainWindow):
         self._build()
         self._build_actions()
         self._start_worker()
+        self.screen = ScreenCapturer(self)
+        self.screen.captured.connect(self._on_screen_captured)
+        self.screen.failed.connect(lambda message: self._on_failed(self.generation, message))
         self._show_empty()
+        if offer_capture:
+            QTimer.singleShot(500, self._offer_capture_mode)
 
     # --- construction ---------------------------------------------------------
 
@@ -281,6 +294,14 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
         layout.addWidget(self.engine_chip)
         layout.addSpacing(12)
+        self.capture_button = QPushButton(icon("target", PALETTE["accent_text"]), "  Capturer (F5)")
+        self.capture_button.setObjectName("Primary")
+        self.capture_button.setToolTip(
+            "Capture la partie (téléphone ou écran) et calcule le coup — parties contre les bots"
+        )
+        self.capture_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.capture_button.clicked.connect(self._capture)
+        layout.addWidget(self.capture_button)
         for button in (paste, open_, copy, self.menu_button):
             layout.addWidget(button)
         return header
@@ -497,6 +518,7 @@ class MainWindow(QMainWindow):
             ("open", "Ouvrir une capture…", QKeySequence.StandardKey.Open, self._open_file),
             ("paste", "Coller une capture", QKeySequence.StandardKey.Paste, self._paste),
             None,
+            ("target", "Mode capture (téléphone ou écran)…", None, self._offer_capture_mode),
             ("crop", "Délimiter le plateau à la main…", None, self._draw_region),
             ("flip", "Retourner l'échiquier", QKeySequence("F"), self._flip),
             ("target", "Calibrer sur la position initiale (facultatif)…", None, self._recalibrate),
@@ -524,6 +546,7 @@ class MainWindow(QMainWindow):
             ("B", lambda: self._on_turn_clicked(chess.BLACK, from_key=True)),
             ("Space", lambda: self._start_analysis(UNLIMITED)),
             ("Escape", self._stop_analysis),
+            ("F5", self._capture),
         ):
             QShortcut(QKeySequence(key), self, activated=slot)
 
@@ -535,6 +558,8 @@ class MainWindow(QMainWindow):
         self.request_recognize.connect(self.worker.recognize)
         self.request_analyse.connect(self.worker.analyse)
         self.request_calibrate.connect(self.worker.calibrate)
+        self.request_phone.connect(self.worker.capture_phone)
+        self.worker.phone_captured.connect(self._on_phone_captured)
         self.request_engine.connect(self.worker.switch_engine)
         self.request_stop.connect(self.worker.stop, Qt.ConnectionType.BlockingQueuedConnection)
         self.worker.engine_ready.connect(self._on_engine_ready)
@@ -647,6 +672,8 @@ class MainWindow(QMainWindow):
         self.image = rgb
         self.region = None
         self.turn_explicit = False
+        if self.my_color is not None:
+            self.turn.set_value(self.my_color)  # à défaut d'indice contraire : à vous de jouer
         self.orientation.set_value(Orientation.AUTO)
         self._update_capture_card()
         if self.templates is None and not self._has_model():
@@ -662,6 +689,89 @@ class MainWindow(QMainWindow):
         if dialog.exec() and dialog.region is not None:
             self.region = dialog.region
             self._reread()
+
+    # --- mode capture (parties contre les bots) ----------------------------
+
+    def _offer_capture_mode(self) -> None:
+        """Propose de capturer le téléphone branché, à défaut l'écran de l'ordinateur."""
+        found = phones()
+        ready = [phone for phone in found if phone.ready]
+        if ready:
+            phone = ready[0]
+            answer = QMessageBox.question(
+                self,
+                "Téléphone connecté",
+                f"Un téléphone est connecté ({phone.model or phone.serial}).\n\n"
+                "Jouez-vous aux échecs dessus, contre un bot ? Chessio capturera son écran "
+                "à chaque clic sur « Capturer » (F5).",
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self.capture_source, self.phone_serial = "phone", phone.serial
+                self._ask_color()
+            return
+        if found:
+            QMessageBox.information(
+                self,
+                "Téléphone à autoriser",
+                "Un téléphone est branché mais n'autorise pas encore Chessio. Sur le "
+                "téléphone, activez Options pour les développeurs → Débogage USB, puis "
+                "acceptez la demande d'autorisation qui s'affiche.",
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "Capture de l'écran",
+            "Aucun téléphone n'est connecté.\n\nJouez-vous aux échecs sur cet ordinateur, "
+            "contre un bot ? Vous indiquerez une fois la zone de l'écran où se trouve "
+            "l'échiquier ; chaque clic sur « Capturer » (F5) la lira.",
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.capture_source, self.screen_zone = "screen", None
+            self._ask_color()
+            self._capture()
+
+    def _ask_color(self) -> None:
+        box = QMessageBox(self)
+        box.setWindowTitle("Votre camp")
+        box.setText(
+            "Avec quelles pièces jouez-vous ? Chessio calculera les coups de ce camp.\n\n"
+            "Rappel : uniquement contre les bots (règles de Chess.com)."
+        )
+        white = box.addButton("○  Blancs", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("●  Noirs", QMessageBox.ButtonRole.AcceptRole)
+        box.exec()
+        self.my_color = chess.WHITE if box.clickedButton() is white else chess.BLACK
+        self.turn.set_value(self.my_color)
+        side = "Blancs" if self.my_color == chess.WHITE else "Noirs"
+        self._toast(f"Mode capture : vous jouez les {side}. Appuyez sur F5 à votre tour.")
+
+    def _capture(self) -> None:
+        """Une capture, déclenchée par l'utilisateur."""
+        if self.capture_source is None:
+            self._offer_capture_mode()
+            return
+        generation = self._next_generation()  # interrompt une analyse en cours
+        self.status.setText("Capture…")
+        if self.capture_source == "phone":
+            self.request_phone.emit(generation, self.phone_serial)
+        else:
+            self.screen.request()
+
+    def _on_phone_captured(self, generation: int, rgb: np.ndarray) -> None:
+        if generation == self.generation:
+            self._set_image(rgb)
+
+    def _on_screen_captured(self, rgb: np.ndarray) -> None:
+        if self.screen_zone is None:
+            dialog = RegionDialog(rgb, self)
+            dialog.setWindowTitle("Zone de l'échiquier à capturer")
+            if not dialog.exec() or dialog.region is None:
+                self.status.setText("")
+                return
+            self.screen_zone = dialog.region
+        zone = self.screen_zone
+        crop = rgb[zone.y : zone.y + zone.size, zone.x : zone.x + zone.size]
+        self._set_image(np.ascontiguousarray(crop) if crop.size else rgb)
 
     # --- calibration ----------------------------------------------------------
 
@@ -811,6 +921,16 @@ class MainWindow(QMainWindow):
             return
 
         detected = self.recognition is not None and self.recognition.turn_detected
+        if self.my_color is not None and detected and board.turn != self.my_color:
+            again = QPushButton(icon("target"), "  Capturer à nouveau")
+            again.clicked.connect(self._capture)
+            self.banner.show_message(
+                "warning",
+                "C'est au bot de jouer. Capturez à nouveau (F5) après son coup.",
+                [again],
+            )
+            self._clear_analysis("En attente du coup du bot.")
+            return
         if detected and self.turn_explicit and board.turn != self.recognition.board.turn:
             self.banner.show_message(
                 "info",

@@ -11,6 +11,7 @@ from __future__ import annotations
 import chess
 from PySide6.QtCore import QObject, Signal, Slot
 
+from chessio.capture import CaptureError, capture_phone
 from chessio.engine import Engine
 from chessio.paths import templates_path
 from chessio.recognize import recognize
@@ -25,6 +26,7 @@ class Worker(QObject):
     progress = Signal(int, object)  # génération, Analysis provisoire
     analysed = Signal(int, object)  # génération, Analysis finale
     calibrated = Signal(object)  # TemplateSet
+    phone_captured = Signal(int, object)  # génération, image RGB
     failed = Signal(int, str)  # génération, message
 
     def __init__(self, engine_choice: str | None = None) -> None:
@@ -93,6 +95,13 @@ class Worker(QObject):
             self.calibrated.emit(templates)
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(generation, f"Calibration impossible : {exc}")
+
+    @Slot(int, str)
+    def capture_phone(self, generation: int, serial: str) -> None:
+        try:
+            self.phone_captured.emit(generation, capture_phone(serial))
+        except CaptureError as exc:
+            self.failed.emit(generation, str(exc))
 
     @Slot()
     def stop(self) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 from PySide6.QtCore import QSettings
@@ -30,6 +31,9 @@ def confirm_warning(parent: QWidget | None = None) -> bool:
 
 
 def create_app(argv: list[str] | None = None) -> QApplication:
+    # Le thème GTK de Qt lit un réglage GNOME absent d'Ubuntu 26.04 et fait planter
+    # l'application ; Chessio a son propre style, le thème générique suffit.
+    os.environ.setdefault("QT_QPA_PLATFORMTHEME", "generic")
     app = QApplication.instance() or QApplication(argv if argv is not None else sys.argv)
     app.setApplicationName("Chessio")
     app.setOrganizationName("chessio")
@@ -43,7 +47,7 @@ def main() -> int:
     app = create_app()
     if not confirm_warning():
         return 0
-    window = MainWindow()
+    window = MainWindow(offer_capture=True)
     window.resize(1320, 840)
     window.show()
     return app.exec()
