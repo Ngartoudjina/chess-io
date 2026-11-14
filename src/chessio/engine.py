@@ -199,12 +199,15 @@ class Engine:
         self,
         board: chess.Board,
         *,
-        time_limit: float = DEFAULT_TIME,
+        time_limit: float | None = DEFAULT_TIME,
         multipv: int = 1,
         on_update: Callable[[Analysis], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
     ) -> Analysis:
         """Calcule les ``multipv`` meilleurs coups en ``time_limit`` secondes.
+
+        ``time_limit=None`` : analyse illimitée, qui s'approfondit jusqu'à ce que
+        ``should_stop`` réponde vrai (bouton « Arrêter », nouvelle position…).
 
         ``on_update`` reçoit des résultats provisoires au fil de l'approfondissement ;
         ``should_stop`` permet d'interrompre l'analyse (vérifié à chaque information
@@ -213,7 +216,9 @@ class Engine:
         Lève :class:`~chessio.position.InvalidPositionError` sur une position
         douteuse : on ne propose jamais de coup sur une position invalide.
         """
-        if not MIN_TIME <= time_limit <= MAX_TIME:
+        if time_limit is None and should_stop is None:
+            raise ValueError("Une analyse illimitée doit pouvoir être arrêtée (should_stop)")
+        if time_limit is not None and not MIN_TIME <= time_limit <= MAX_TIME:
             raise ValueError(f"Temps de réflexion hors limites ({MIN_TIME} à {MAX_TIME} s)")
         if multipv < 1:
             raise ValueError("multipv doit valoir au moins 1")
@@ -228,7 +233,7 @@ class Engine:
         lines: dict[int, Line] = {}
         stopped = False
         last_update = 0.0
-        limit = chess.engine.Limit(time=time_limit)
+        limit = chess.engine.Limit(time=time_limit) if time_limit is not None else None
         with self._engine.analysis(board, limit, multipv=multipv) as running:
             for info in running:
                 if should_stop is not None and should_stop():

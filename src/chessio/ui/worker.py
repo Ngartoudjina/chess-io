@@ -75,7 +75,7 @@ class Worker(QObject):
         try:
             result = self.engine.analyse(
                 chess.Board(fen),
-                time_limit=seconds,
+                time_limit=seconds if seconds > 0 else None,  # 0 : illimitée
                 multipv=multipv,
                 on_update=lambda partial: self.progress.emit(generation, partial),
                 should_stop=lambda: self.latest != generation,

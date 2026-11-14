@@ -103,3 +103,21 @@ def test_win_draw_loss(engine):
     assert best.white_expectation > 0.99
     start = engine.analyse(chess.Board(), time_limit=0.3).best
     assert 0.3 < start.white_expectation < 0.8
+
+
+def test_unlimited_analysis_deepens_until_stopped(engine):
+    updates = []
+
+    def deep_enough():
+        return bool(updates) and updates[-1].best.depth >= 18
+
+    final = engine.analyse(
+        chess.Board(), time_limit=None, on_update=updates.append, should_stop=deep_enough
+    )
+    assert final.stopped
+    assert max(u.best.depth for u in updates) >= 18
+
+
+def test_unlimited_analysis_requires_a_stop(engine):
+    with pytest.raises(ValueError):
+        engine.analyse(chess.Board(), time_limit=None)

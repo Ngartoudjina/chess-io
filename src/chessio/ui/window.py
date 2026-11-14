@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from chessio import __version__
-from chessio.engine import DEFAULT_TIME, HOMEMADE, MAX_TIME, Analysis
+from chessio.engine import DEFAULT_TIME, HOMEMADE, Analysis
 from chessio.paths import templates_path
 from chessio.position import validate
 from chessio.recognize import (
@@ -66,6 +66,7 @@ WARNING = (
     "pendant une partie en cours. Utilisez Chessio uniquement pour les parties "
     "terminées, les parties contre les bots, les problèmes et l'étude."
 )
+UNLIMITED = 0.0  # durée d'analyse : sans limite, jusqu'à « Arrêter »
 LINE_COLORS = ("#f59e0b", "#38bdf8", "#c084fc")  # mêmes teintes que les flèches
 IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.webp *.bmp)"
 PIECE_NAMES = {
@@ -368,9 +369,11 @@ class MainWindow(QMainWindow):
         self.progress.setTextVisible(False)
         self.progress.hide()
         buttons = QHBoxLayout()
-        self.deeper_button = QPushButton(icon("deeper"), "  Approfondir (10 s)")
-        self.deeper_button.setToolTip("Analyser plus longtemps (Espace)")
-        self.deeper_button.clicked.connect(lambda: self._start_analysis(MAX_TIME))
+        self.deeper_button = QPushButton(icon("deeper"), "  Analyse illimitée")
+        self.deeper_button.setToolTip(
+            "Le moteur approfondit sans limite de temps, en direct, jusqu'à « Arrêter » (Espace)"
+        )
+        self.deeper_button.clicked.connect(lambda: self._start_analysis(UNLIMITED))
         self.stop_button = QPushButton(icon("stop"), "  Arrêter")
         self.stop_button.setToolTip("Arrêter l'analyse (Échap)")
         self.stop_button.clicked.connect(self._stop_analysis)
@@ -519,7 +522,7 @@ class MainWindow(QMainWindow):
         for key, slot in (
             ("W", lambda: self._on_turn_clicked(chess.WHITE, from_key=True)),
             ("B", lambda: self._on_turn_clicked(chess.BLACK, from_key=True)),
-            ("Space", lambda: self._start_analysis(MAX_TIME)),
+            ("Space", lambda: self._start_analysis(UNLIMITED)),
             ("Escape", self._stop_analysis),
         ):
             QShortcut(QKeySequence(key), self, activated=slot)
@@ -953,7 +956,7 @@ class MainWindow(QMainWindow):
             self._pending_analysis = True
             self._clear_analysis("Démarrage du moteur…")
             return
-        seconds = seconds or self._seconds()
+        seconds = self._seconds() if seconds is None else seconds
         generation = self._next_generation()
         self.analysis = None
         self.selected_line = 0
@@ -961,7 +964,13 @@ class MainWindow(QMainWindow):
         self._analysis_seconds = seconds
         self.best_label.setText("…")
         self.eval_chip.hide()
-        self.best_detail.setText(f"Analyse ({seconds_text(seconds)})…")
+        unlimited = seconds == UNLIMITED
+        self.best_detail.setText(
+            "Analyse illimitée : le moteur approfondit… (Échap pour arrêter)"
+            if unlimited
+            else f"Analyse ({seconds_text(seconds)})…"
+        )
+        self.progress.setRange(0, 0 if unlimited else 1000)  # barre animée sans fin
         self.progress.setValue(0)
         self.progress.show()
         self.stop_button.show()
@@ -981,6 +990,8 @@ class MainWindow(QMainWindow):
             self._show_analysis(self.analysis, final=True)
 
     def _tick_progress(self) -> None:
+        if self._analysis_seconds == UNLIMITED:
+            return
         elapsed = time.monotonic() - self._analysis_started
         self.progress.setValue(min(1000, int(1000 * elapsed / self._analysis_seconds)))
 
