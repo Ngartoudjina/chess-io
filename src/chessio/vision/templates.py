@@ -67,11 +67,12 @@ class CalibrationError(ValueError):
 class CellPrediction:
     label: str  # symbole FEN de la pièce, ou « . » pour une case vide
     confidence: float  # 0 (ambigu) à 1 (sans hésitation)
-    rms: float  # écart moyen au meilleur gabarit, en niveaux de couleur
+    rms: float = 0.0  # écart moyen au meilleur gabarit (classification par gabarits)
+    threshold: float = MIN_CONFIDENCE  # confiance en deçà de laquelle la case est douteuse
 
     @property
     def doubtful(self) -> bool:
-        return self.confidence < MIN_CONFIDENCE or self.rms > MAX_RMS
+        return self.confidence < self.threshold or self.rms > MAX_RMS
 
 
 def silhouette(cell: np.ndarray) -> np.ndarray:

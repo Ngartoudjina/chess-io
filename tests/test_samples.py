@@ -20,6 +20,6 @@ def test_sample_is_valid(sample):
     assert validate(sample.expected) == []
 
 
-def test_twenty_distinct_samples():
-    assert len({s.expected.board_fen() for s in evaluer.SAMPLES}) == 20
-    assert [s.number for s in evaluer.SAMPLES] == list(range(1, 21))
+def test_distinct_numbered_samples():
+    assert len({s.expected.board_fen() for s in evaluer.SAMPLES}) == len(evaluer.SAMPLES) == 21
+    assert [s.number for s in evaluer.SAMPLES] == list(range(1, 22))

@@ -95,12 +95,11 @@ def _cmd_capture(args: argparse.Namespace) -> int:
     from chessio.vision.templates import TemplateSet
 
     path = args.gabarits or templates_path()
-    if not path.exists():
-        raise ValueError(f"Pas de calibration ({path}) : lancez d'abord « chessio calibrer »")
+    templates = TemplateSet.load(path) if path.exists() else None  # calibration facultative
     result = recognize(
         load_image(args.image),
         args.trait,
-        TemplateSet.load(path),
+        templates,
         orientation=Orientation(args.orientation),
     )
     print(f"Reconnaissance : {result.elapsed * 1000:.0f} ms")

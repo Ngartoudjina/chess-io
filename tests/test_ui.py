@@ -67,13 +67,9 @@ def analysed(window):
     return lambda: window.analysis is not None and not window._progress_timer.isActive()
 
 
-def test_first_capture_calibrates_then_reads_turn(app, make_window):
+def test_first_capture_read_without_calibration(app, make_window):
     window = make_window(calibrated=False)
-    assert window.templates is None
-    window._set_image(render_board(chess.Board()))  # position initiale : calibration
-    assert pump(app, lambda: window.templates is not None)
-    assert templates_path().exists()
-
+    assert window.templates is None  # réseau des cases : aucune calibration nécessaire
     board = chess.Board()
     for san in ("e4", "e5", "Nf3"):
         board.push_san(san)

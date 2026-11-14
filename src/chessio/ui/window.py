@@ -57,6 +57,7 @@ from chessio.ui.widgets import (
 )
 from chessio.ui.worker import Worker
 from chessio.vision.board import BoardRegion, load_image
+from chessio.vision.classify import load_model
 from chessio.vision.templates import TemplateSet
 
 WARNING = (
@@ -495,7 +496,7 @@ class MainWindow(QMainWindow):
             None,
             ("crop", "Délimiter le plateau à la main…", None, self._draw_region),
             ("flip", "Retourner l'échiquier", QKeySequence("F"), self._flip),
-            ("target", "Recalibrer sur la position initiale…", None, self._recalibrate),
+            ("target", "Calibrer sur la position initiale (facultatif)…", None, self._recalibrate),
             None,
             ("copy", "Copier la FEN", QKeySequence("Ctrl+Shift+C"), self._copy_fen),
             ("copy", "Copier la variante (PGN)", None, self._copy_pgn),
@@ -554,13 +555,18 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError, KeyError):
             return None
 
+    @staticmethod
+    def _has_model() -> bool:
+        """Réseau des cases disponible : aucune calibration n'est alors nécessaire."""
+        return load_model() is not None
+
     def _next_generation(self) -> int:
         self.generation += 1
         self.worker.latest = self.generation
         return self.generation
 
     def _show_empty(self) -> None:
-        self.panel.hint.set_calibrated(self.templates is not None)
+        self.panel.hint.set_calibrated(self.templates is not None or self._has_model())
         self.panel.show_hint(True)
         self.banner.hide()
         self._clear_analysis("En attente d'une capture.")
@@ -640,8 +646,8 @@ class MainWindow(QMainWindow):
         self.turn_explicit = False
         self.orientation.set_value(Orientation.AUTO)
         self._update_capture_card()
-        if self.templates is None:
-            self._calibrate_from(rgb)
+        if self.templates is None and not self._has_model():
+            self._calibrate_from(rgb)  # sans modèle entraîné, la calibration reste nécessaire
         else:
             self._reread()
 
@@ -687,7 +693,7 @@ class MainWindow(QMainWindow):
 
     def _reread(self) -> None:
         """Relit la capture (nouvelle image, orientation ou zone imposée)."""
-        if self.image is None or self.templates is None:
+        if self.image is None or (self.templates is None and not self._has_model()):
             return
         generation = self._next_generation()
         self._stop_progress()

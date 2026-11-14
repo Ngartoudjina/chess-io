@@ -29,10 +29,11 @@ class Sample:
     start_fen: str  # FEN à charger dans Chess.com
     move: str | None  # coup à jouer ensuite (SAN), pour obtenir le surlignage
     black_bottom: bool  # retourner l'échiquier (Noirs en bas)
+    file: str | None = None  # nom de fichier, s'il ne suit pas la numérotation
 
     @property
     def filename(self) -> str:
-        return f"{self.number:02d}.png"
+        return self.file or f"{self.number:02d}.png"
 
     @property
     def expected(self) -> chess.Board:
@@ -125,6 +126,15 @@ SAMPLES = (
     ),
     Sample(19, "Course de pions", "8/5k2/8/1p6/8/8/6PK/8 b - - 0 1", None, False),
     Sample(20, "Mat à l'étouffée", "6rk/5Npp/8/8/8/8/6PP/6K1 b - - 0 1", None, False),
+    # Capture de téléphone (autre application, autres pièces), position relevée case par case.
+    Sample(
+        21,
+        "Téléphone : partie contre un bot",
+        "r1b1k2r/5ppp/pqn1pn2/1p6/3pP1P1/P1N1BPbP/1PP1K3/R2Q1BNR w kq - 0 13",
+        None,
+        False,
+        file="telephone_01.png",
+    ),
 )
 
 
@@ -152,7 +162,7 @@ def write_instructions(path: Path) -> None:
     print(f"Instructions écrites : {path}")
 
 
-def evaluate(folder: Path, templates: TemplateSet) -> int:
+def evaluate(folder: Path, templates: TemplateSet | None) -> int:
     exact = squares_ok = squares_total = missing = oriented_wrong = 0
     timings = []
     sources: dict[str, int] = {}
@@ -233,10 +243,10 @@ def main() -> int:
     if args.instructions:
         write_instructions(args.instructions)
         return 0
-    if args.calibration is None:
-        parser.error("--calibration est requis pour évaluer")
-    image = load_image(args.calibration)
-    templates = calibrate(split_cells(crop_board(image, locate_board(image))))
+    templates = None  # réseau des cases (lot L2) : aucune calibration nécessaire
+    if args.calibration is not None:
+        image = load_image(args.calibration)
+        templates = calibrate(split_cells(crop_board(image, locate_board(image))))
     return evaluate(args.dossier, templates)
 
 

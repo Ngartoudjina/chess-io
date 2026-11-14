@@ -18,7 +18,7 @@ Le cahier des charges complet est dans
 |-----|---------|------|
 | L0 — Socle | Dépôt, environnement, FEN → Stockfish, CI | ✅ terminé |
 | L1 — Chaîne minimale | Capture → coup, un thème, orientation automatique | ✅ recette passée : 20/20 captures réelles |
-| L2 — Vision robuste | Classifieur ONNX, orientation, correction | à faire |
+| L2 — Vision robuste | Réseau des cases, tout thème, sans calibration | ✅ 21/21 captures (dont téléphone) |
 | L3 — Moteur maison v1 | Python, négamax alpha-bêta, UCI | ✅ perft exact, Elo mesuré |
 | L4 — Moteur maison v2 | Rust + shakmaty, réglage Texel | ✅ ≈ 2 400 Elo (réglage Texel à venir) |
 | L5 — Évaluation apprise | Petit réseau NNUE | à faire |
@@ -201,6 +201,14 @@ Résultat de la recette L4 (13/11/2026, moteur Rust 0.3, même protocole) :
 
 Objectif fixé après le lot L3 : plus de 2 200 Elo, atteint. Le réglage Texel de
 l'évaluation, prévu au lot L4, reste à faire.
+
+Résultat de la recette L2 (14/11/2026, sans calibration) : 21/21 positions
+(20 Chess.com + 1 capture de téléphone d'une autre application), 1 344/1 344 cases,
+orientation 21/21 par lecture des coordonnées, 300 ms au plus. Généralisation : le
+modèle entraîné sans les pièces du téléphone lisait déjà 63 cases sur 64 de cette
+capture. Réseaux en NumPy (`chessio/vision/cnn.py`, ~95 000 poids) plutôt que
+PyTorch/ONNX : la connexion rendait PyTorch (200 Mo) impraticable ; réentraînement
+avec `scripts/entrainer_cases.py` et `scripts/entrainer_coordonnees.py`.
 
 ## Licence
 

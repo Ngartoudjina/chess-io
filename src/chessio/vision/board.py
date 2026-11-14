@@ -12,6 +12,10 @@ Méthode, en trois temps :
 3. **Vérification** : la zone doit être carrée et ses 64 cases doivent
    alterner clair et foncé. La case en haut à gauche de l'écran est toujours
    claire (a8 vue côté Blancs, h1 vue côté Noirs).
+
+Les couleurs des cases ne sont pas imposées (lot L2) : :func:`detect_board` essaie
+les thèmes connus, puis toutes les paires de couleurs dominantes de l'image ;
+une paire n'est retenue que si elle dessine un vrai damier de 8 × 8 cases.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from pathlib import Path
 
 import chess
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 from chessio.vision.theme import CHESSCOM_GREEN, Theme
 
@@ -30,7 +34,7 @@ CELL = 64  # côté d'une case normalisée, en pixels
 MIN_SQUARE_PX = 12  # en dessous, la capture est trop petite pour être lue
 COLOR_TOLERANCE = 20  # écart maximal par canal avec une couleur du thème
 COARSE_FILL = 0.05  # part minimale de pixels du thème pour qu'une ligne compte
-EDGE_FILL = 0.8  # part minimale de pixels du thème sur un bord du plateau
+EDGE_FILL = 0.7  # part minimale de pixels du thème sur un bord (deux cases surlignées tolérées)
 MIN_CONSISTENT_CELLS = 60  # cases (sur 64) qui doivent respecter l'alternance
 
 
@@ -52,8 +56,10 @@ class BoardRegion:
 
 
 def load_image(path: str | Path) -> np.ndarray:
-    """Charge un PNG ou un JPEG en tableau RGB ``uint8``."""
+    """Charge une image (PNG, JPEG, WebP…) en tableau RGB ``uint8``, redressée selon
+    son orientation EXIF (photos de téléphone)."""
     with Image.open(path) as img:
+        img = ImageOps.exif_transpose(img)
         return np.asarray(img.convert("RGB"), dtype=np.uint8).copy()
 
 
@@ -119,17 +125,18 @@ def _full_lines(mask: np.ndarray, axis: int) -> tuple[int, int] | None:
 
 def _consistent_cells(light: np.ndarray, dark: np.ndarray) -> int:
     """Nombre de cases dont la couleur dominante respecte l'alternance de l'échiquier."""
-    edges = np.linspace(0, light.shape[0], 9).round().astype(int)
-    count = 0
-    for row in range(8):
-        for col in range(8):
-            ys = slice(edges[row], edges[row + 1])
-            xs = slice(edges[col], edges[col + 1])
-            light_part, dark_part = light[ys, xs].mean(), dark[ys, xs].mean()
-            expected_light = (row + col) % 2 == 0
-            if light_part + dark_part >= 0.3 and (light_part > dark_part) == expected_light:
-                count += 1
-    return count
+    side = light.shape[0] // 8
+    if side == 0:
+        return 0
+
+    def shares(mask: np.ndarray) -> np.ndarray:
+        cells = mask[: 8 * side, : 8 * side].reshape(8, side, 8, side)
+        return cells.mean(axis=(1, 3))  # part de chaque case, (8, 8)
+
+    light_part, dark_part = shares(light), shares(dark)
+    expected_light = (np.add.outer(np.arange(8), np.arange(8)) % 2) == 0
+    good = (light_part + dark_part >= 0.3) & ((light_part > dark_part) == expected_light)
+    return int(good.sum())
 
 
 def locate_board(image: np.ndarray, theme: Theme = CHESSCOM_GREEN) -> BoardRegion:
@@ -175,6 +182,100 @@ def locate_board(image: np.ndarray, theme: Theme = CHESSCOM_GREEN) -> BoardRegio
     if _consistent_cells(region_light, region_dark) < MIN_CONSISTENT_CELLS:
         raise BoardNotFoundError("La zone détectée n'a pas l'alternance des cases d'un échiquier.")
     return BoardRegion(left + c0, top + r0, size)
+
+
+DOMINANT_COLORS = 10  # couleurs dominantes examinées pour trouver celles du damier
+MIN_COLOR_SHARE = 0.004  # part minimale de l'image pour qu'une couleur compte
+QUICK_SIDE = 360  # côté (pixels) de l'image réduite servant au tri des paires
+
+
+def _dominant_colors(image: np.ndarray) -> list[tuple[int, int, int]]:
+    """Couleurs moyennes des teintes les plus fréquentes (quantifiées sur 4 bits)."""
+    pixels = image.reshape(-1, 3)
+    keys = (
+        (pixels[:, 0].astype(np.int32) >> 4 << 8) | (pixels[:, 1] >> 4 << 4) | (pixels[:, 2] >> 4)
+    )
+    counts = np.bincount(keys, minlength=4096)
+    sums = [np.bincount(keys, weights=pixels[:, c], minlength=4096) for c in range(3)]
+    colors = []
+    for key in np.argsort(counts)[::-1][:DOMINANT_COLORS]:
+        if counts[key] < MIN_COLOR_SHARE * len(keys):
+            break
+        colors.append(tuple(int(round(sums[c][key] / counts[key])) for c in range(3)))
+    return colors
+
+
+def _pair_score(
+    mask_a: np.ndarray, mask_b: np.ndarray, first: tuple, second: tuple
+) -> tuple[int, Theme] | None:
+    """Sur l'image réduite : ces deux couleurs forment-elles un damier ? (score, thème)"""
+    try:
+        y0, y1, x0, x1 = _coarse_box(mask_a | mask_b)
+    except BoardNotFoundError:
+        return None
+    height, width = y1 - y0 + 1, x1 - x0 + 1
+    if min(height, width) < 8 * 3 or abs(height - width) > 0.12 * max(height, width):
+        return None
+    size = min(height, width)
+    crop_a = mask_a[y0 : y0 + size, x0 : x0 + size]
+    crop_b = mask_b[y0 : y0 + size, x0 : x0 + size]
+    # La case en haut à gauche est claire : elle dit laquelle des deux couleurs l'est.
+    corner = slice(0, max(1, size // 8))
+    if crop_a[corner, corner].mean() >= crop_b[corner, corner].mean():
+        light, dark, light_mask, dark_mask = first, second, crop_a, crop_b
+    else:
+        light, dark, light_mask, dark_mask = second, first, crop_b, crop_a
+    consistent = _consistent_cells(light_mask, dark_mask)
+    if consistent < MIN_CONSISTENT_CELLS - 4:
+        return None
+    theme = Theme(name="détecté", light=(light,), dark=(dark,))
+    return consistent * size * size, theme
+
+
+def candidate_themes(image: np.ndarray) -> list[Theme]:
+    """Thèmes plausibles d'après les couleurs dominantes, du plus au moins probable."""
+    step = max(1, min(image.shape[:2]) // QUICK_SIDE)
+    small = image[::step, ::step]
+    colors = _dominant_colors(small)
+    index = color_index(small)
+    masks = [color_mask(index, (color,)) for color in colors]
+    scored = []
+    for i, first in enumerate(colors):
+        for j in range(i + 1, len(colors)):
+            second = colors[j]
+            if max(abs(a - b) for a, b in zip(first, second, strict=True)) <= 2 * COLOR_TOLERANCE:
+                continue  # deux nuances d'une même couleur
+            result = _pair_score(masks[i], masks[j], first, second)
+            if result is not None:
+                scored.append(result)
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [theme for _, theme in scored]
+
+
+def detect_board(
+    image: np.ndarray, preferred: tuple[Theme, ...] = (CHESSCOM_GREEN,)
+) -> tuple[BoardRegion, Theme]:
+    """Trouve le plateau quel que soit son thème : (zone, couleurs des cases).
+
+    Les thèmes ``preferred`` (calibration, Chess.com) sont essayés d'abord, puis
+    les paires de couleurs dominantes de l'image.
+    """
+    if image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError("Image RGB attendue")
+    for theme in preferred:
+        try:
+            return locate_board(image, theme), theme
+        except BoardNotFoundError:
+            pass
+    for theme in candidate_themes(image)[:3]:
+        try:
+            return locate_board(image, theme), theme
+        except BoardNotFoundError:
+            pass
+    raise BoardNotFoundError(
+        "Aucun échiquier trouvé dans cette capture : il doit être entièrement visible, "
+        "avec des cases de couleur unie."
+    )
 
 
 def crop_board(image: np.ndarray, region: BoardRegion) -> np.ndarray:

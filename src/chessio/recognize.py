@@ -3,9 +3,12 @@
 C'est le seul point de passage entre vision et moteur : il produit un
 ``chess.Board`` et la liste des problèmes qui empêchent de l'analyser.
 
-Outre le placement des pièces, la capture renseigne sur le contexte :
+Le plateau est trouvé quel que soit son thème, et les cases lues par un réseau
+convolutif (lot L2) : aucune calibration n'est nécessaire. Outre le placement
+des pièces, la capture renseigne sur le contexte :
 
-* l'orientation (coordonnées affichées, à défaut structure de pions) ;
+* l'orientation (coordonnées affichées, lues par un second réseau ; à défaut
+  structure de pions) ;
 * le trait : le dernier coup surligné dit qui vient de jouer ; à défaut, un roi
   en échec est forcément celui du camp au trait ;
 * la prise en passant : possible si le dernier coup est un pion avancé de deux cases.
@@ -24,13 +27,17 @@ from chessio.position import Issue, build_board, parse_turn, validate
 from chessio.vision.board import (
     BoardRegion,
     crop_board,
-    locate_board,
+    detect_board,
     screen_to_square,
     split_cells,
 )
+from chessio.vision.classify import classify_cells
+from chessio.vision.cnn import TileNet
+from chessio.vision.coords import read_orientation
 from chessio.vision.lastmove import last_move
 from chessio.vision.orientation import from_coordinates, from_pawns
 from chessio.vision.templates import EMPTY, CellPrediction, TemplateSet
+from chessio.vision.theme import CHESSCOM_GREEN, Theme
 
 
 class Orientation(Enum):
@@ -87,7 +94,7 @@ class Recognition:
 def _orientation(
     cells: np.ndarray,
     labels: list[list[str]],
-    templates: TemplateSet,
+    templates: TemplateSet | None,
     orientation: Orientation,
     turn: chess.Color,
 ) -> tuple[bool, str]:
@@ -95,10 +102,11 @@ def _orientation(
         return True, SOURCE_SETTING
     if orientation is Orientation.BLACK_BOTTOM:
         return False, SOURCE_SETTING
-    if templates.glyphs is not None:
+    detected = read_orientation(cells)  # réseau des coordonnées, toute police
+    if detected is None and templates is not None and templates.glyphs is not None:
         detected = from_coordinates(cells, templates.glyphs, templates.theme)
-        if detected is not None:
-            return detected, SOURCE_COORDINATES
+    if detected is not None:
+        return detected, SOURCE_COORDINATES
     detected = from_pawns(labels)
     if detected is not None:
         return detected, SOURCE_PAWNS
@@ -124,32 +132,39 @@ def _name(color: chess.Color) -> str:
 def recognize(
     image: np.ndarray,
     turn: str | chess.Color | None,
-    templates: TemplateSet,
+    templates: TemplateSet | None = None,
     *,
     orientation: Orientation = Orientation.AUTO,
     region: BoardRegion | None = None,
     default_turn: str | chess.Color = chess.WHITE,
+    net: TileNet | None = None,
 ) -> Recognition:
     """Reconnaît la position d'une capture RGB.
 
     ``turn`` impose la couleur au trait ; ``None`` la fait déduire de la capture
     (dernier coup surligné, roi en échec), ``default_turn`` servant à défaut.
-    ``region`` force la zone du plateau (tracé à la main).
+    ``templates`` (calibration) est facultatif : il accélère la détection du
+    plateau dans ce thème. ``region`` force la zone du plateau (tracé à la main).
     """
     start = time.perf_counter()
     chosen = None if turn is None else parse_turn(turn)
     fallback = parse_turn(default_turn)
+    preferred: tuple[Theme, ...] = (CHESSCOM_GREEN,)
+    if templates is not None:
+        preferred = (templates.theme, CHESSCOM_GREEN)
     if region is None:
-        region = locate_board(image, templates.theme)
+        region, theme = detect_board(image, preferred)
+    else:
+        theme = preferred[0]
     cells = split_cells(crop_board(image, region))
 
     # La classification se fait dans l'ordre de l'écran : elle ne dépend pas de
     # l'orientation, qui n'intervient que pour nommer les cases.
-    grid = templates.classify(cells)
+    grid = classify_cells(cells, templates, net)
     labels = [[prediction.label for prediction in row] for row in grid]
 
     # Dernier coup surligné : la pièce arrivée dit qui vient de jouer.
-    moved = last_move(cells, labels, templates.theme)
+    moved = last_move(cells, labels, theme)
     mover = None
     if moved is not None:
         (to_row, to_col) = moved[1]
