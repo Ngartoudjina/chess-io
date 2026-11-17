@@ -84,7 +84,7 @@ def main() -> int:
     splash = splash_screen()
     splash.show()
     app.processEvents()
-    window = MainWindow(offer_capture=True)
+    window = MainWindow()
     window.resize(1320, 840)
     window.show()
     splash.finish(window)

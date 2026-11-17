@@ -51,6 +51,7 @@ from chessio.ui.updates import Updater, share
 from chessio.ui.widgets import (
     Banner,
     BoardPanel,
+    ElidedLabel,
     LineRow,
     Segmented,
     Toast,
@@ -277,26 +278,33 @@ class MainWindow(QMainWindow):
         titles.setSpacing(0)
         title = QLabel("Chessio")
         title.setObjectName("AppTitle")
-        subtitle = QLabel("Le meilleur coup à partir d'une capture Chess.com")
+        subtitle = QLabel("Le meilleur coup, hors ligne")
         subtitle.setObjectName("AppSubtitle")
         titles.addWidget(title)
         titles.addWidget(subtitle)
-        self.engine_chip = QLabel("●  Moteur : démarrage…")
+        self.engine_chip = ElidedLabel()
+        self.engine_chip.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.engine_chip.set_full_text("●  Moteur : démarrage…")
         self.engine_chip.setObjectName("AppSubtitle")
 
         paste = self._header_button("paste", "Coller", "Coller une capture (Ctrl+V)")
         paste.clicked.connect(self._paste)
         open_ = self._header_button("open", "Ouvrir", "Ouvrir une image (Ctrl+O)")
         open_.clicked.connect(self._open_file)
-        copy = self._header_button("copy", "FEN", "Copier la FEN (Ctrl+Maj+C)")
-        copy.clicked.connect(self._copy_fen)
+        play = self._header_button(
+            "play", "Jouer contre l'IA", "Jouer une partie contre Chessio (Ctrl+J)"
+        )
+        play.clicked.connect(self._open_play)
         self.menu_button = self._header_button("menu", "", "Plus d'actions")
         self.menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
 
+        # Les titres ne se tassent jamais ; c'est l'état du moteur qui cède la place.
+        for label in (title, subtitle):
+            label.setMinimumWidth(label.sizeHint().width())
+        self.engine_chip.setMinimumWidth(40)
         layout.addWidget(logo)
         layout.addLayout(titles)
-        layout.addStretch(1)
-        layout.addWidget(self.engine_chip)
+        layout.addWidget(self.engine_chip, stretch=1)
         layout.addSpacing(12)
         self.capture_button = QPushButton(icon("target", PALETTE["accent_text"]), "  Capturer (F5)")
         self.capture_button.setObjectName("Primary")
@@ -306,7 +314,7 @@ class MainWindow(QMainWindow):
         self.capture_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.capture_button.clicked.connect(self._capture)
         layout.addWidget(self.capture_button)
-        for button in (paste, open_, copy, self.menu_button):
+        for button in (play, paste, open_, self.menu_button):
             layout.addWidget(button)
         return header
 
@@ -318,6 +326,7 @@ class MainWindow(QMainWindow):
         self.panel.board.square_clicked.connect(self._on_square_clicked)
         self.panel.hint.paste_requested.connect(self._paste)
         self.panel.hint.open_requested.connect(self._open_file)
+        self.panel.hint.play_requested.connect(self._open_play)
         self.status = QLabel()
         self.status.setObjectName("Status")
 
@@ -615,7 +624,7 @@ class MainWindow(QMainWindow):
 
     def _on_engine_ready(self, name: str) -> None:
         self.engine_ready = True
-        self.engine_chip.setText(f"●  {name}")
+        self.engine_chip.set_full_text(f"●  {name}")
         self.engine_chip.setStyleSheet(f"color: {PALETTE['accent']}; background: transparent;")
         if self._pending_analysis:
             self._pending_analysis = False
@@ -625,7 +634,7 @@ class MainWindow(QMainWindow):
         self._settings.setValue("engine", choice or "")
         self._next_generation()  # abandonne l'analyse en cours
         self.engine_ready = False
-        self.engine_chip.setText("●  Moteur : démarrage…")
+        self.engine_chip.set_full_text("●  Moteur : démarrage…")
         self.engine_chip.setStyleSheet(f"color: {PALETTE['muted']}; background: transparent;")
         if self.board is not None:
             self._pending_analysis = True
@@ -633,7 +642,7 @@ class MainWindow(QMainWindow):
         self.request_engine.emit(choice)
 
     def _on_engine_failed(self, message: str) -> None:
-        self.engine_chip.setText("●  Moteur indisponible")
+        self.engine_chip.set_full_text("●  Moteur indisponible")
         self.engine_chip.setStyleSheet(f"color: {PALETTE['danger']}; background: transparent;")
         self.banner.show_message("danger", f"Moteur d'échecs indisponible : {message}")
 

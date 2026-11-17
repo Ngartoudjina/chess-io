@@ -459,6 +459,7 @@ class DropHint(QFrame):
 
     paste_requested = Signal()
     open_requested = Signal()
+    play_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -482,9 +483,11 @@ class DropHint(QFrame):
         paste = QPushButton(icon("paste", PALETTE["accent_text"]), "  Coller  (Ctrl+V)")
         paste.setObjectName("Primary")
         paste.clicked.connect(self.paste_requested)
-        open_ = QPushButton(icon("open"), "  Ouvrir un fichier…")
+        open_ = QPushButton(icon("open"), "  Ouvrir…")
         open_.clicked.connect(self.open_requested)
-        for button in (paste, open_):
+        play = QPushButton(icon("play"), "  Jouer contre l'IA")
+        play.clicked.connect(self.play_requested)
+        for button in (paste, open_, play):
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             buttons.addWidget(button)
         buttons.addStretch(1)
