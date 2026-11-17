@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from chessio import coach
 from chessio.engine import HOMEMADE, Engine
 from chessio.match import engine_command
 from chessio.ui.notation import figurine_line
@@ -60,6 +61,7 @@ class PlayWorker(QObject):
     ready = Signal(str)
     ai_moved = Signal(int, str)  # génération, coup UCI
     evaluated = Signal(int, object)  # génération, Analysis du coach
+    coached = Signal(int, object, object)  # génération, Analysis (3 coups), ligne de menace
     failed = Signal(str)
 
     def __init__(self) -> None:
@@ -109,6 +111,30 @@ class PlayWorker(QObject):
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc))
 
+    @Slot(int, str)
+    def coach_position(self, generation: int, fen: str) -> None:
+        """Analyse pour l'assistant : 3 meilleurs coups, et menace adverse (coup nul)."""
+        if self.coach_engine_missing() or generation != self.latest:
+            return
+        try:
+            board = chess.Board(fen)
+            stop = lambda: self.latest != generation  # noqa: E731
+            analysis = self.coach.analyse(board, time_limit=1.0, multipv=3, should_stop=stop)
+            threat = None
+            if not board.is_check() and not analysis.outcome:
+                null = board.copy(stack=False)
+                null.turn = not null.turn  # l'adversaire rejoue (sans historique de coup nul)
+                null.ep_square = None
+                if null.is_valid():
+                    threat = self.coach.analyse(null, time_limit=0.5, should_stop=stop).best
+            if generation == self.latest:
+                self.coached.emit(generation, analysis, threat)
+        except Exception as exc:  # noqa: BLE001
+            self.failed.emit(str(exc))
+
+    def coach_engine_missing(self) -> bool:
+        return self.coach is None
+
     @Slot()
     def stop(self) -> None:
         if self.opponent is not None:
@@ -123,6 +149,7 @@ class PlayWindow(QMainWindow):
     request_configure = Signal(str, object)
     request_play = Signal(int, str, float)
     request_evaluate = Signal(int, str, float)
+    request_coach = Signal(int, str)
     request_stop = Signal()
 
     def __init__(self) -> None:
@@ -136,6 +163,9 @@ class PlayWindow(QMainWindow):
         self.hint: chess.Move | None = None
         self.generation = 0
         self.engines_ready = False
+        self.best_now = None  # meilleure ligne du coach à votre tour
+        self.review = None  # (position avant, coup joué, meilleure ligne) à juger
+        self.feed: list = []  # conseils affichés
         self.game_over_shown = False
         self._build()
         self._start_worker()
@@ -204,10 +234,18 @@ class PlayWindow(QMainWindow):
         column.addWidget(frame)
 
         frame, layout = card(spacing=6)
+        layout.addWidget(caption("Assistant"))
+        self.assistant = QTextBrowser()
+        self.assistant.setMinimumHeight(220)
+        layout.addWidget(self.assistant, stretch=1)
+        column.addWidget(frame, stretch=3)
+
+        frame, layout = card(spacing=6)
         layout.addWidget(caption("Coups"))
         self.moves = QTextBrowser()
-        layout.addWidget(self.moves, stretch=1)
-        column.addWidget(frame, stretch=1)
+        self.moves.setMaximumHeight(90)
+        layout.addWidget(self.moves)
+        column.addWidget(frame)
 
         side = QWidget()
         side.setLayout(column)
@@ -247,6 +285,8 @@ class PlayWindow(QMainWindow):
         self.request_configure.connect(self.worker.configure)
         self.request_play.connect(self.worker.play)
         self.request_evaluate.connect(self.worker.evaluate)
+        self.request_coach.connect(self.worker.coach_position)
+        self.worker.coached.connect(self._on_coached)
         self.request_stop.connect(self.worker.stop, Qt.ConnectionType.BlockingQueuedConnection)
         self.worker.ready.connect(self._on_ready)
         self.worker.ai_moved.connect(self._on_ai_move)
@@ -288,12 +328,14 @@ class PlayWindow(QMainWindow):
         if self._check_game_over():
             return
         generation = self._next()
-        self.request_evaluate.emit(generation, self.board.fen(), 0.4)
         if self.board.turn != self.human and self.engines_ready:
+            self.request_evaluate.emit(generation, self.board.fen(), 0.4)
             self.status.setText("L'IA réfléchit…")
             self.request_play.emit(generation, self.board.fen(), 0.6)
         elif self.engines_ready:
-            self.status.setText("À vous de jouer.")
+            self.best_now = None
+            self.request_coach.emit(generation, self.board.fen())
+            self.status.setText("À vous de jouer. L'assistant analyse…")
 
     def _on_ai_move(self, generation: int, uci: str) -> None:
         if generation != self.generation:
@@ -306,6 +348,57 @@ class PlayWindow(QMainWindow):
     def _on_evaluated(self, generation: int, analysis) -> None:
         if generation != self.generation or analysis.best is None:
             return
+        self._show_eval(analysis)
+        if self.review is not None:  # votre dernier coup, jugé sur la position qui en résulte
+            before, move, best_before = self.review
+            self.review = None
+            if best_before is not None:
+                loss = coach._cp(best_before, self.human) - coach._cp(analysis.best, self.human)
+                self.feed = [coach.move_quality(max(0, loss), best_before, before, move)]
+                self._render_feed()
+
+    def _on_coached(self, generation: int, analysis, threat_line) -> None:
+        if generation != self.generation:
+            return
+        if analysis.best is None:
+            return
+        self._show_eval(analysis)
+        self.best_now = analysis.best
+        board = self.board
+        advices = list(self.feed)  # jugement de votre coup précédent
+        if len(board.move_stack) >= 1 and board.turn == self.human:
+            last = board.pop()
+            advices.append(coach.opponent_intent(board, last))
+            board.push(last)
+        found = coach.threat(board, threat_line, analysis.best)
+        if found is not None:
+            advices.append(found)
+        advices += coach.traps(board, self.human, analysis.lines)
+        advices += coach.strategy(board, self.human)
+        found = coach.plan(board, analysis.best)
+        if found is not None:
+            advices.append(found)
+        self.feed = []
+        self._render_feed(advices)
+        self.status.setText("À vous de jouer.")
+
+    def _render_feed(self, advices=None) -> None:
+        colors = {"bien": "#81b64c", "info": "#d6d3ce", "attention": "#f0b13b", "danger": "#e5574b"}
+        titles = {
+            "coup": "Votre coup",
+            "adversaire": "Intention de l'adversaire",
+            "menace": "Menace",
+            "piège": "Piège",
+            "stratégie": "Stratégie",
+            "plan": "Plan",
+        }
+        rows = "".join(
+            f"<p><b style='color:{colors[a.level]}'>{titles[a.kind]}</b><br>{a.text}</p>"
+            for a in (advices if advices is not None else self.feed)
+        )
+        self.assistant.setHtml(rows)
+
+    def _show_eval(self, analysis) -> None:
         best = analysis.best
         mate = best.score.white().mate()
         text = f"M{abs(mate)}" if mate is not None else best.evaluation.lstrip("+")
@@ -315,20 +408,15 @@ class PlayWindow(QMainWindow):
             f"Évaluation {best.evaluation} · Blancs {wdl.wins / 10:.0f} % · "
             f"nulle {wdl.draws / 10:.0f} % · Noirs {wdl.losses / 10:.0f} %"
         )
-        if self._waiting_hint and self.board.turn == self.human:
-            self._waiting_hint = False
-            self.hint = best.move
-            self.status.setText(f"Indice : {self.board.san(best.move)}")
-            self._redraw()
-
-    _waiting_hint = False
 
     def _ask_hint(self) -> None:
-        if self.board.turn != self.human or self.board.is_game_over():
+        if self.board.turn != self.human or self.board.is_game_over() or self.best_now is None:
             return
-        self._waiting_hint = True
-        self.status.setText("Le coach cherche…")
-        self.request_evaluate.emit(self._next(), self.board.fen(), 1.5)
+        self.hint = self.best_now.move
+        self.status.setText(
+            f"Indice : {self.board.san(self.hint)} — {coach.describe_move(self.board, self.hint)}."
+        )
+        self._redraw()
 
     def _undo(self) -> None:
         if len(self.board.move_stack) < 1:
@@ -360,6 +448,7 @@ class PlayWindow(QMainWindow):
                     if move is None:
                         return
                 self.selected = None
+                self.review = (self.board.copy(), move, self.best_now)
                 self.board.push(move)
                 self._after_move()
                 return

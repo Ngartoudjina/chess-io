@@ -117,6 +117,13 @@ maison), puis jouez en cliquant la pièce et sa case d'arrivée. Un coach (Stock
 à pleine force) affiche l'évaluation et donne un indice sur demande (H) ;
 Ctrl+Z annule votre dernier coup.
 
+**Assistant** : à chaque tour, un panneau commente la partie en français — qualité
+de votre dernier coup (excellent, imprécision, erreur, gaffe) et meilleure
+alternative, intention du coup adverse (attaque, fourchette, échec…), **menace**
+de l'adversaire (ce qu'il jouerait s'il rejouait), **pièges** (pièces en prise,
+prises empoisonnées, mat en vue), conseils de **stratégie** selon la phase de jeu
+et la structure, et plan du moteur. Tout est calculé hors-ligne (`chessio/coach.py`).
+
 ### Ligne de commande
 
 ```bash

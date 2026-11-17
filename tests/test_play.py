@@ -49,6 +49,8 @@ def test_play_hint_and_undo(window):
     click(w, "e2e4")
     assert pump(app, lambda: len(w.board.move_stack) == 2)  # l'IA a répondu
     assert w.board.turn == chess.WHITE
+    assert pump(app, lambda: w.best_now is not None)  # analyse de l'assistant
+    assert w.assistant.toPlainText()  # l'assistant a commenté la position
     w._ask_hint()
     assert pump(app, lambda: w.hint is not None)
     assert w.hint in w.board.legal_moves
