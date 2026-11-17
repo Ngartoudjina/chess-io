@@ -26,6 +26,9 @@ from chessio.position import ensure_valid
 
 ENGINE_ENV = "CHESSIO_STOCKFISH"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# Paquet autonome (PyInstaller/AppImage) : moteurs et données sont dans le paquet.
+FROZEN = bool(getattr(sys, "frozen", False))
+BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", PROJECT_ROOT))
 
 # ENF-05 : temps de réflexion réglable de 0,1 à 10 s, 2 s par défaut.
 MIN_TIME = 0.1
@@ -46,6 +49,8 @@ class EngineNotFoundError(FileNotFoundError):
 
 def python_engine_command() -> list[str]:
     """Moteur maison en Python (lot L3), avec l'interpréteur Python courant."""
+    if FROZEN:  # l'exécutable du paquet sait lancer le moteur Python
+        return [sys.executable, "moteur-uci"]
     return [sys.executable, "-m", "chessio.moteur"]
 
 
@@ -55,6 +60,7 @@ def find_rust_engine() -> Path | None:
     if env := os.environ.get(RUST_ENGINE_ENV):
         candidates.append(Path(env))
     candidates += [
+        BUNDLE_ROOT / "engines" / "chessio-moteur",
         PROJECT_ROOT / "engines" / "chessio-moteur",
         PROJECT_ROOT / "moteur-rs" / "target" / "release" / "chessio-moteur",
     ]
@@ -75,6 +81,7 @@ def find_stockfish() -> Path:
     candidates: list[Path] = []
     if env := os.environ.get(ENGINE_ENV):
         candidates.append(Path(env))
+    candidates.append(BUNDLE_ROOT / "engines" / "stockfish")
     candidates.append(PROJECT_ROOT / "engines" / "stockfish")
     if found := shutil.which("stockfish"):
         candidates.append(Path(found))

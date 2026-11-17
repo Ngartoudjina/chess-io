@@ -47,6 +47,7 @@ from chessio.recognize import (
 from chessio.ui.notation import figurine, figurine_line
 from chessio.ui.screen import ScreenCapturer
 from chessio.ui.style import ARROW_NAMES, PALETTE, app_icon, icon, piece_icon
+from chessio.ui.updates import Updater, share
 from chessio.ui.widgets import (
     Banner,
     BoardPanel,
@@ -222,6 +223,7 @@ class MainWindow(QMainWindow):
 
         self._build()
         self._build_actions()
+        self.updater = Updater(self)
         self._start_worker()
         self.screen = ScreenCapturer(self)
         self.screen.captured.connect(self._on_screen_captured)
@@ -229,6 +231,8 @@ class MainWindow(QMainWindow):
         self._show_empty()
         if offer_capture:
             QTimer.singleShot(500, self._offer_capture_mode)
+            if Updater.check_on_start():
+                QTimer.singleShot(3000, lambda: self.updater.check(interactive=False))
 
     # --- construction ---------------------------------------------------------
 
@@ -527,6 +531,8 @@ class MainWindow(QMainWindow):
             ("copy", "Copier la FEN", QKeySequence("Ctrl+Shift+C"), self._copy_fen),
             ("copy", "Copier la variante (PGN)", None, self._copy_pgn),
             None,
+            ("deeper", "Rechercher une mise à jour…", None, lambda: self.updater.check()),
+            ("copy", "Partager Chessio…", None, lambda: share(self)),
             ("info", "Cadre d'utilisation", None, self._show_warning),
             ("close", "Quitter", QKeySequence.StandardKey.Quit, self.close),
         ]
@@ -541,6 +547,11 @@ class MainWindow(QMainWindow):
             action.triggered.connect(slot)
             menu.addAction(action)
             self.addAction(action)  # raccourci actif même menu fermé
+        auto = QAction("Vérifier les mises à jour au démarrage", self)
+        auto.setCheckable(True)
+        auto.setChecked(Updater.check_on_start())
+        auto.toggled.connect(Updater.set_check_on_start)
+        menu.insertAction(menu.actions()[-3], auto)
         self.menu_button.setMenu(menu)
         for key, slot in (
             ("W", lambda: self._on_turn_clicked(chess.WHITE, from_key=True)),

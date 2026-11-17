@@ -25,3 +25,4 @@ models/*.onnx
 
 # Compilation du moteur Rust (lot L4)
 moteur-rs/target/
+

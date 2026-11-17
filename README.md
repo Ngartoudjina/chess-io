@@ -22,7 +22,28 @@ Le cahier des charges complet est dans
 | L3 — Moteur maison v1 | Python, négamax alpha-bêta, UCI | ✅ perft exact, Elo mesuré |
 | L4 — Moteur maison v2 | Rust + shakmaty, réglage Texel | ✅ ≈ 2 400 Elo (réglage Texel à venir) |
 | L5 — Évaluation apprise | Petit réseau NNUE | à faire |
-| L6 — Finition | AppImage, documentation, recette | à faire |
+| L6 — Finition | AppImage, mises à jour, lanceur, documentation | 🚧 AppImage et mises à jour en place |
+
+## Installer et partager
+
+Chessio se distribue en **un seul fichier**, `Chessio-<version>-x86_64.AppImage`,
+publié sur la page [Releases](https://github.com/Ngartoudjina/chess-io/releases/latest) :
+téléchargez-le, rendez-le exécutable (clic droit → Propriétés → Autoriser
+l'exécution) et ouvrez-le. Rien d'autre à installer (Python, Qt, Stockfish et le
+moteur maison sont dedans).
+
+**Mises à jour** : menu ⋮ → « Rechercher une mise à jour » ; Chessio télécharge la
+nouvelle version, remplace son fichier et redémarre. La vérification peut se faire
+au démarrage (option du même menu, désactivée par défaut : aucun accès réseau sans
+votre accord). **Partager** : menu ⋮ → « Partager Chessio » copie le lien.
+
+**Publier une version** : changer `__version__` (`src/chessio/__init__.py`) et
+`version` (`pyproject.toml`), puis pousser une étiquette `v<version>` : GitHub
+construit l'AppImage et la publie (`.github/workflows/publication.yml`). En local :
+`packaging/construire_appimage.sh`.
+
+**Lanceur Ubuntu** (version de développement) : `chessio installer` ajoute Chessio
+au menu des applications, avec son logo.
 
 ## Installation (développement)
 

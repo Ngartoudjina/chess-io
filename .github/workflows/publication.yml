@@ -1,0 +1,53 @@
+name: Publication
+
+# Une étiquette « v… » poussée sur GitHub construit l'AppImage et la publie dans
+# une « Release » : c'est elle que Chessio télécharge pour se mettre à jour.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    # Ubuntu 22.04 : une AppImage construite sur une glibc ancienne marche sur les récentes.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Bibliothèques système (Qt, AppImage)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libfontconfig1 libdbus-1-3 \
+            libxcb-cursor0 libfuse2 fonts-dejavu-core
+
+      - name: Stockfish
+        run: bash scripts/fetch_stockfish.sh
+
+      - name: Moteur Rust
+        run: cargo build --release --manifest-path moteur-rs/Cargo.toml
+
+      - name: Dépendances
+        run: pip install -e . pyinstaller
+
+      - name: Version cohérente avec l'étiquette
+        run: |
+          VERSION=$(python -c 'import chessio; print(chessio.__version__)')
+          test "v$VERSION" = "${GITHUB_REF_NAME}" || {
+            echo "L'étiquette ${GITHUB_REF_NAME} ne correspond pas à la version $VERSION"; exit 1; }
+
+      - name: AppImage
+        run: PYTHON=python bash packaging/construire_appimage.sh
+
+      - name: Publication
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Chessio-*-x86_64.AppImage
+          generate_release_notes: true

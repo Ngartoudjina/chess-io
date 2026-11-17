@@ -271,6 +271,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if (argv if argv is not None else sys.argv[1:])[:1] == ["moteur-uci"]:
+        from chessio.moteur.uci import main as uci_main  # moteur Python, depuis le paquet
+
+        return uci_main()
     args = build_parser().parse_args(argv)
     if args.command is None:
         return _cmd_gui(args)
