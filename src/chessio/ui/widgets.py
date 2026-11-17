@@ -94,7 +94,9 @@ class BoardView(QWidget):
         arrows: Iterable[tuple[chess.Move, str]] = (),
         marked: Iterable[chess.Square] = (),
         lastmove: chess.Move | None = None,
+        fill: dict[chess.Square, str] | None = None,
     ) -> None:
+        """``fill`` : couleurs supplémentaires de cases (sélection, cibles possibles)."""
         self._board = board.copy(stack=False)
         self._white_bottom = white_bottom
         check = None
@@ -110,7 +112,7 @@ class BoardView(QWidget):
             lastmove=lastmove,
             check=check,
             arrows=arrow_list,
-            fill=dict.fromkeys(marked, DOUBTFUL_FILL),
+            fill={**(fill or {}), **dict.fromkeys(marked, DOUBTFUL_FILL)},
             coordinates=False,
             colors=BOARD_COLORS,
         )

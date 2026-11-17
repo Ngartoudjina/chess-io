@@ -163,6 +163,17 @@ def _cmd_match(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_jouer(args: argparse.Namespace) -> int:
+    from chessio.ui.app import create_app
+    from chessio.ui.play import PlayWindow
+
+    app = create_app([])
+    window = PlayWindow()
+    window.resize(1280, 840)
+    window.show()
+    return app.exec()
+
+
 def _cmd_gui(args: argparse.Namespace) -> int:
     from chessio.ui.app import main as gui_main
 
@@ -228,6 +239,9 @@ def build_parser() -> argparse.ArgumentParser:
     match.add_argument("--pgn", type=Path, help="fichier où ajouter les parties jouées")
     match.add_argument("--sans-fenetre", action="store_true", help="résultats en texte seulement")
     match.set_defaults(func=_cmd_match)
+
+    jouer = sub.add_parser("jouer", help="jouer contre l'IA, avec indices")
+    jouer.set_defaults(func=_cmd_jouer)
 
     gui = sub.add_parser("gui", help="interface graphique")
     gui.set_defaults(func=_cmd_gui)

@@ -109,6 +109,14 @@ donne une estimation de son Elo avec un intervalle de confiance à 95 %.
 .venv/bin/chessio match --elo 1800 --sans-fenetre --pgn parties.pgn  # en texte
 ```
 
+### Jouer contre l'IA
+
+`chessio jouer` (ou menu ⋮ → « Jouer contre l'IA », Ctrl+J) : choisissez vos pièces
+et le niveau de l'IA (Stockfish bridé de 1 320 à 2 800 Elo, pleine force, ou le moteur
+maison), puis jouez en cliquant la pièce et sa case d'arrivée. Un coach (Stockfish
+à pleine force) affiche l'évaluation et donne un indice sur demande (H) ;
+Ctrl+Z annule votre dernier coup.
+
 ### Ligne de commande
 
 ```bash

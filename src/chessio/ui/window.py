@@ -518,6 +518,7 @@ class MainWindow(QMainWindow):
             ("open", "Ouvrir une capture…", QKeySequence.StandardKey.Open, self._open_file),
             ("paste", "Coller une capture", QKeySequence.StandardKey.Paste, self._paste),
             None,
+            ("play", "Jouer contre l'IA…", QKeySequence("Ctrl+J"), self._open_play),
             ("target", "Mode capture (téléphone ou écran)…", None, self._offer_capture_mode),
             ("crop", "Délimiter le plateau à la main…", None, self._draw_region),
             ("flip", "Retourner l'échiquier", QKeySequence("F"), self._flip),
@@ -691,6 +692,13 @@ class MainWindow(QMainWindow):
             self._reread()
 
     # --- mode capture (parties contre les bots) ----------------------------
+
+    def _open_play(self) -> None:
+        from chessio.ui.play import PlayWindow
+
+        self.play_window = PlayWindow()
+        self.play_window.resize(1280, 840)
+        self.play_window.show()
 
     def _offer_capture_mode(self) -> None:
         """Propose de capturer le téléphone branché, à défaut l'écran de l'ordinateur."""
