@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 import chess
 import chess.svg
@@ -293,5 +294,18 @@ def piece_icon(symbol: str, size: int = 28) -> QIcon:
     return QIcon(svg_pixmap(chess.svg.piece(chess.Piece.from_symbol(symbol)), size))
 
 
+LOGO_PATH = Path(__file__).with_name("assets") / "chessio.svg"
+
+
+@lru_cache(maxsize=1)
 def app_icon() -> QIcon:
-    return QIcon(svg_pixmap(chess.svg.piece(chess.Piece(chess.KNIGHT, chess.WHITE)), 64))
+    """Logo de Chessio (cavalier blanc sur fond vert), à toutes les tailles."""
+    svg = LOGO_PATH.read_text(encoding="utf-8")
+    icon_ = QIcon()
+    for size in (16, 24, 32, 48, 64, 128, 256):
+        icon_.addPixmap(svg_pixmap(svg, size, scale=1))
+    return icon_
+
+
+def logo_pixmap(size: int) -> QPixmap:
+    return svg_pixmap(LOGO_PATH.read_text(encoding="utf-8"), size)

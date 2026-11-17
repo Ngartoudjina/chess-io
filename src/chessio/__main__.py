@@ -174,6 +174,23 @@ def _cmd_jouer(args: argparse.Namespace) -> int:
     return app.exec()
 
 
+def _cmd_installer(args: argparse.Namespace) -> int:
+    from chessio.desktop import install
+
+    for path in install():
+        print(f"Installé : {path}")
+    print("Chessio est dans le menu des applications (Jeux), avec son icône.")
+    return 0
+
+
+def _cmd_desinstaller(args: argparse.Namespace) -> int:
+    from chessio.desktop import uninstall
+
+    removed = uninstall()
+    print("\n".join(f"Retiré : {p}" for p in removed) or "Rien à retirer.")
+    return 0
+
+
 def _cmd_gui(args: argparse.Namespace) -> int:
     from chessio.ui.app import main as gui_main
 
@@ -194,7 +211,7 @@ def _add_engine_options(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="chessio", description=WARNING)
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")  # sans commande : l'interface
 
     analyse = sub.add_parser("analyse", help="meilleur coup pour une FEN")
     analyse.add_argument("fen", help="FEN complète, ou placement seul avec --trait")
@@ -243,6 +260,11 @@ def build_parser() -> argparse.ArgumentParser:
     jouer = sub.add_parser("jouer", help="jouer contre l'IA, avec indices")
     jouer.set_defaults(func=_cmd_jouer)
 
+    installer = sub.add_parser("installer", help="ajouter Chessio au menu des applications")
+    installer.set_defaults(func=_cmd_installer)
+    desinstaller = sub.add_parser("desinstaller", help="retirer Chessio du menu")
+    desinstaller.set_defaults(func=_cmd_desinstaller)
+
     gui = sub.add_parser("gui", help="interface graphique")
     gui.set_defaults(func=_cmd_gui)
     return parser
@@ -250,6 +272,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command is None:
+        return _cmd_gui(args)
     try:
         return args.func(args)
     except (ValueError, InvalidPositionError, EngineNotFoundError) as exc:
