@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QSplashScreen, QWidget
 
 from chessio import __version__
 from chessio.ui.style import PALETTE, app_icon, logo_pixmap, stylesheet
+from chessio.ui.widgets import fit_to_screen
 from chessio.ui.window import WARNING, MainWindow
 
 
@@ -85,7 +86,7 @@ def main() -> int:
     splash.show()
     app.processEvents()
     window = MainWindow()
-    window.resize(1320, 840)
+    fit_to_screen(window, 1320, 840)
     window.show()
     splash.finish(window)
     return app.exec()

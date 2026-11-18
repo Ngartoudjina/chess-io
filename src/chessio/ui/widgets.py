@@ -18,7 +18,15 @@ from PySide6.QtCore import (
     QVariantAnimation,
     Signal,
 )
-from PySide6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPainterPath, QPen
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QGuiApplication,
+    QMouseEvent,
+    QPainter,
+    QPainterPath,
+    QPen,
+)
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -50,6 +58,20 @@ def card(*, spacing: int = 10, margins: int = 16) -> tuple[QFrame, QVBoxLayout]:
     layout.setContentsMargins(margins, margins, margins, margins)
     layout.setSpacing(spacing)
     return frame, layout
+
+
+def fit_to_screen(window: QWidget, width: int, height: int) -> None:
+    """Taille d'ouverture limitée à l'écran (barre du haut et barre de titre comprises).
+
+    Sous Wayland, la zone « disponible » inclut souvent la barre de GNOME : on garde
+    une marge pour que le bas de la fenêtre (ligne d'état, champ FEN) reste visible.
+    """
+    screen = window.screen() or QGuiApplication.primaryScreen()
+    if screen is not None:
+        area = screen.availableGeometry()
+        width = min(width, area.width() - 40)
+        height = min(height, area.height() - 90)
+    window.resize(max(width, window.minimumWidth()), max(height, window.minimumHeight()))
 
 
 def caption(text: str) -> QLabel:

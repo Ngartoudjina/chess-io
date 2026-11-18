@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
@@ -28,7 +29,7 @@ from chessio import coach
 from chessio.engine import HOMEMADE, Engine
 from chessio.match import engine_command
 from chessio.ui.notation import figurine_line
-from chessio.ui.style import ARROW_NAMES, app_icon, icon, piece_icon
+from chessio.ui.style import ARROW_NAMES, PALETTE, app_icon, icon, piece_icon
 from chessio.ui.widgets import BoardPanel, Segmented, caption, card
 
 # Niveaux proposés : (libellé, moteur, Elo imposé ou None pour la pleine force).
@@ -184,18 +185,46 @@ class PlayWindow(QMainWindow):
         self.panel.board.square_clicked.connect(self._on_square)
         self.status = QLabel("Démarrage des moteurs…")
         self.status.setObjectName("Status")
+        self.moves = QLabel("")
+        self.moves.setObjectName("Muted")
+        self.moves.setToolTip("Derniers coups de la partie")
         left.addWidget(self.panel, stretch=1)
         left.addWidget(self.status)
+        left.addWidget(self.moves)
         body.addLayout(left, stretch=1)
 
-        column = QVBoxLayout()
+        # Colonne de droite dans une zone à défilement : sur un petit écran, rien n'est écrasé.
+        side = QWidget()
+        column = QVBoxLayout(side)
+        column.setContentsMargins(0, 0, 8, 0)
         column.setSpacing(12)
+        # Carte « Partie » compacte : les réglages ne s'ouvrent qu'à la demande, pour
+        # laisser la place à l'assistant.
         frame, layout = card(spacing=8)
-        layout.addWidget(caption("Nouvelle partie"))
-        layout.addWidget(QLabel("Vos pièces"))
+        layout.addWidget(caption("Partie"))
+        self.game_label = QLabel("")
+        self.game_label.setWordWrap(True)
+        self.game_label.setStyleSheet("font-weight: 600;")
+        layout.addWidget(self.game_label)
+        buttons = QHBoxLayout()
+        new_game = QPushButton(icon("play", PALETTE["accent_text"]), "  Nouvelle partie")
+        new_game.setObjectName("Primary")
+        new_game.clicked.connect(self.new_game)
+        self.setup_button = QPushButton(icon("menu"), "  Couleur et niveau")
+        self.setup_button.setCheckable(True)
+        self.setup_button.toggled.connect(lambda shown: self.setup.setVisible(shown))
+        buttons.addWidget(new_game)
+        buttons.addWidget(self.setup_button)
+        layout.addLayout(buttons)
+        self.setup = QWidget()
+        self.setup.setObjectName("Transparent")
+        setup = QVBoxLayout(self.setup)
+        setup.setContentsMargins(0, 4, 0, 0)
+        setup.setSpacing(8)
+        setup.addWidget(QLabel("Vos pièces"))
         self.color_choice = Segmented([("Blancs", "w"), ("Noirs", "b"), ("Au hasard", "?")])
-        layout.addWidget(self.color_choice)
-        layout.addWidget(QLabel("Niveau de l'IA"))
+        setup.addWidget(self.color_choice)
+        setup.addWidget(QLabel("Niveau de l'IA"))
         self.level_choice = Segmented(
             [(label.split(" · ")[0], i) for i, (label, _, _) in enumerate(LEVELS[:4])]
         )
@@ -208,49 +237,48 @@ class PlayWindow(QMainWindow):
         self.level_choice2.changed.connect(lambda _: self._pick(self.level_choice))
         self.level_label = QLabel()
         self.level_label.setObjectName("Hint")
-        layout.addWidget(self.level_choice)
-        layout.addWidget(self.level_choice2)
-        layout.addWidget(self.level_label)
-        new_game = QPushButton(icon("play"), "  Nouvelle partie")
-        new_game.setObjectName("Primary")
-        new_game.clicked.connect(self.new_game)
-        layout.addWidget(new_game)
+        self.level_label.setWordWrap(True)
+        setup.addWidget(self.level_choice)
+        setup.addWidget(self.level_choice2)
+        setup.addWidget(self.level_label)
+        self.setup.setVisible(False)
+        layout.addWidget(self.setup)
         column.addWidget(frame)
 
         frame, layout = card(spacing=8)
-        layout.addWidget(caption("Pendant la partie"))
+        layout.addWidget(caption("Assistant"))
+        self.summary_label = QLabel("")
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
+        self.eval_label = QLabel("")
+        self.eval_label.setObjectName("Hint")
+        self.eval_label.setWordWrap(True)
+        layout.addWidget(self.eval_label)
+        self.assistant = QTextBrowser()
+        self.assistant.setMinimumHeight(200)
+        self.assistant.setPlaceholderText(
+            "Jouez un coup : l'assistant vous dira à chaque tour quoi faire, "
+            "ce que prépare l'IA et ce qu'il faut éviter."
+        )
+        layout.addWidget(self.assistant, stretch=1)
         row = QHBoxLayout()
         self.hint_button = QPushButton(icon("info"), "  Indice (H)")
+        self.hint_button.setToolTip("Montre le meilleur coup sur l'échiquier")
         self.hint_button.clicked.connect(self._ask_hint)
         undo = QPushButton(icon("flip"), "  Annuler (Ctrl+Z)")
+        undo.setToolTip("Reprend votre dernier coup")
         undo.clicked.connect(self._undo)
         row.addWidget(self.hint_button)
         row.addWidget(undo)
         layout.addLayout(row)
-        self.eval_label = QLabel("")
-        self.eval_label.setObjectName("Muted")
-        self.eval_label.setWordWrap(True)
-        layout.addWidget(self.eval_label)
-        column.addWidget(frame)
+        column.addWidget(frame, stretch=1)
 
-        frame, layout = card(spacing=6)
-        layout.addWidget(caption("Assistant"))
-        self.assistant = QTextBrowser()
-        self.assistant.setMinimumHeight(220)
-        layout.addWidget(self.assistant, stretch=1)
-        column.addWidget(frame, stretch=3)
-
-        frame, layout = card(spacing=6)
-        layout.addWidget(caption("Coups"))
-        self.moves = QTextBrowser()
-        self.moves.setMaximumHeight(90)
-        layout.addWidget(self.moves)
-        column.addWidget(frame)
-
-        side = QWidget()
-        side.setLayout(column)
-        side.setFixedWidth(400)
-        body.addWidget(side)
+        scroll = QScrollArea()
+        scroll.setWidget(side)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFixedWidth(410)
+        body.addWidget(scroll)
         self.setCentralWidget(root)
         QShortcut(QKeySequence("H"), self, activated=self._ask_hint)
         QShortcut(QKeySequence.StandardKey.Undo, self, activated=self._undo)
@@ -276,7 +304,9 @@ class PlayWindow(QMainWindow):
 
     def _update_level_label(self) -> None:
         label, _, _ = self._level()
-        self.level_label.setText(f"Niveau : {label} (appliqué à la prochaine partie)")
+        self.level_label.setText(
+            f"Niveau choisi : {label}. Cliquez sur « Nouvelle partie » pour l'appliquer."
+        )
 
     def _start_worker(self) -> None:
         self.worker_thread = QThread(self)
@@ -313,13 +343,22 @@ class PlayWindow(QMainWindow):
         self._update_level_label()
         label, engine, elo = self._level()
         self.status.setText(f"Préparation de l'IA ({label})…")
+        side = "Blancs" if self.human == chess.WHITE else "Noirs"
+        self.game_label.setText(f"Vous avez les {side} · IA : {label}")
         self.request_configure.emit(engine, elo)
+        self.setup_button.setChecked(False)
+        self.summary_label.setText("")
+        self.eval_label.setText("")
+        self.assistant.setHtml("")
+        self.feed = []
+        self.review = None
         self._redraw()
 
     def _on_ready(self, name: str) -> None:
         self.engines_ready = True
         side = "Blancs" if self.human == chess.WHITE else "Noirs"
         self.status.setText(f"Vous jouez les {side} contre {name} ({self._level()[0]}).")
+        self.game_label.setText(f"Vous avez les {side} · IA : {self._level()[0]}")
         self._after_move()
 
     def _after_move(self) -> None:
@@ -354,7 +393,9 @@ class PlayWindow(QMainWindow):
             self.review = None
             if best_before is not None:
                 loss = coach._cp(best_before, self.human) - coach._cp(analysis.best, self.human)
-                self.feed = [coach.move_quality(max(0, loss), best_before, before, move)]
+                self.feed = [
+                    coach.move_quality(max(0, loss), best_before, before, move, analysis.best)
+                ]
                 self._render_feed()
 
     def _on_coached(self, generation: int, analysis, threat_line) -> None:
@@ -364,50 +405,64 @@ class PlayWindow(QMainWindow):
             return
         self._show_eval(analysis)
         self.best_now = analysis.best
-        board = self.board
         advices = list(self.feed)  # jugement de votre coup précédent
-        if len(board.move_stack) >= 1 and board.turn == self.human:
-            last = board.pop()
-            advices.append(coach.opponent_intent(board, last))
-            board.push(last)
-        found = coach.threat(board, threat_line, analysis.best)
-        if found is not None:
-            advices.append(found)
-        advices += coach.traps(board, self.human, analysis.lines)
-        advices += coach.strategy(board, self.human)
-        found = coach.plan(board, analysis.best)
-        if found is not None:
-            advices.append(found)
+        if self.board.turn == self.human:
+            advices += coach.advise(self.board, analysis.lines, threat_line)
+        advices.sort(key=lambda a: coach.ORDER.get(a.kind, 9))  # la priorité d'abord
         self.feed = []
         self._render_feed(advices)
         self.status.setText("À vous de jouer.")
 
     def _render_feed(self, advices=None) -> None:
-        colors = {"bien": "#81b64c", "info": "#d6d3ce", "attention": "#f0b13b", "danger": "#e5574b"}
-        titles = {
-            "coup": "Votre coup",
-            "adversaire": "Intention de l'adversaire",
-            "menace": "Menace",
-            "piège": "Piège",
-            "stratégie": "Stratégie",
-            "plan": "Plan",
+        colors = {
+            "bien": PALETTE["accent"],
+            "info": PALETTE["muted"],
+            "attention": PALETTE["warning"],
+            "danger": PALETTE["danger"],
         }
-        rows = "".join(
-            f"<p><b style='color:{colors[a.level]}'>{titles[a.kind]}</b><br>{a.text}</p>"
-            for a in (advices if advices is not None else self.feed)
-        )
-        self.assistant.setHtml(rows)
+        blocks = []
+        for advice in advices if advices is not None else self.feed:
+            color = colors[advice.level]
+            if advice.kind == "action" and advice.level == "info":
+                color = PALETTE["info"]  # la priorité reste visible même sans urgence
+            title = coach.TITLES.get(advice.kind, advice.kind)
+            # « À faire maintenant » ressort : texte plus grand, fond teinté.
+            key = advice.kind == "action"
+            background = f" bgcolor='{PALETTE['card_alt']}'" if key else ""
+            size = "11pt" if key else "10pt"
+            blocks.append(
+                "<table width='100%' cellspacing='0' cellpadding='0' style='margin-bottom:10px'>"
+                f"<tr><td width='4' bgcolor='{color}'></td>"
+                f"<td{background} style='padding:6px 10px'>"
+                f"<span style='color:{color}; font-weight:700; font-size:9pt'>"
+                f"{title.upper()}</span><br>"
+                f"<span style='font-size:{size}'>{advice.text}</span></td></tr></table>"
+            )
+        self.assistant.setHtml("".join(blocks))
 
     def _show_eval(self, analysis) -> None:
         best = analysis.best
         mate = best.score.white().mate()
         text = f"M{abs(mate)}" if mate is not None else best.evaluation.lstrip("+")
         self.panel.eval_bar.set_eval(best.white_expectation, text, self.human == chess.WHITE)
-        wdl = best.white_wdl
-        self.eval_label.setText(
-            f"Évaluation {best.evaluation} · Blancs {wdl.wins / 10:.0f} % · "
-            f"nulle {wdl.draws / 10:.0f} % · Noirs {wdl.losses / 10:.0f} %"
-        )
+        words, level = coach.summary(self.board, best, self.human)
+        color = {
+            "bien": PALETTE["accent"],
+            "info": PALETTE["text"],
+            "attention": PALETTE["warning"],
+            "danger": PALETTE["danger"],
+        }[level]
+        self.summary_label.setText(words)
+        self.summary_label.setStyleSheet(f"color: {color}; font-weight: 600; font-size: 11pt;")
+        mine = best.score.pov(self.human)
+        if mine.is_mate():
+            self.eval_label.setText("")
+        else:
+            pawns = mine.score() / 100
+            unit = "pions" if abs(pawns) >= 2 else "pion"
+            self.eval_label.setText(
+                f"Évaluation {pawns:+.1f} {unit} (positif : vous êtes mieux)".replace("-", "−")
+            )
 
     def _ask_hint(self) -> None:
         if self.board.turn != self.human or self.board.is_game_over() or self.best_now is None:
@@ -480,7 +535,9 @@ class PlayWindow(QMainWindow):
             lastmove=lastmove,
             fill=fill,
         )
-        self.moves.setPlainText(figurine_line(chess.Board(), self.board.move_stack))
+        tokens = figurine_line(chess.Board(), self.board.move_stack).split()
+        text = " ".join(tokens[-15:])
+        self.moves.setText(("… " if len(tokens) > 15 else "") + text)
 
     def _check_game_over(self) -> bool:
         outcome = self.board.outcome(claim_draw=True)

@@ -58,6 +58,7 @@ from chessio.ui.widgets import (
     WdlBar,
     caption,
     card,
+    fit_to_screen,
 )
 from chessio.ui.worker import Worker
 from chessio.vision.board import BoardRegion, load_image
@@ -717,7 +718,7 @@ class MainWindow(QMainWindow):
         from chessio.ui.play import PlayWindow
 
         self.play_window = PlayWindow()
-        self.play_window.resize(1280, 840)
+        fit_to_screen(self.play_window, 1280, 840)
         self.play_window.show()
 
     def _offer_capture_mode(self) -> None:

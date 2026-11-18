@@ -139,10 +139,11 @@ def _cmd_match(args: argparse.Namespace) -> int:
     if not args.sans_fenetre:
         from chessio.ui.app import create_app
         from chessio.ui.match import MatchWindow
+        from chessio.ui.widgets import fit_to_screen
 
         app = create_app([])
         window = MatchWindow(settings, delay=args.delai, pgn=args.pgn)
-        window.resize(1320, 880)
+        fit_to_screen(window, 1320, 880)
         window.show()
         return app.exec()
 
@@ -166,10 +167,11 @@ def _cmd_match(args: argparse.Namespace) -> int:
 def _cmd_jouer(args: argparse.Namespace) -> int:
     from chessio.ui.app import create_app
     from chessio.ui.play import PlayWindow
+    from chessio.ui.widgets import fit_to_screen
 
     app = create_app([])
     window = PlayWindow()
-    window.resize(1280, 840)
+    fit_to_screen(window, 1280, 840)
     window.show()
     return app.exec()
 
